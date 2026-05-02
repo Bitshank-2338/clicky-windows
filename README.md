@@ -207,7 +207,7 @@ Place skill files in `~/.clicky/skills/` — Clicky auto-loads on startup.
 
 ### 1. Clone
 ```bash
-git clone https://github.com/YOUR_USERNAME/clicky-windows.git
+git clone https://github.com/Bitshank-2338/clicky-windows.git
 cd clicky-windows
 ```
 

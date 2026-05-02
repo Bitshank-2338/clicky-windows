@@ -14,7 +14,7 @@
 #define MyAppName        "Clicky"
 #define MyAppVersion     "1.0.0"
 #define MyAppPublisher   "Shashank Singh"
-#define MyAppURL         "https://github.com/YOUR_USERNAME/clicky-windows"
+#define MyAppURL         "https://github.com/Bitshank-2338/clicky-windows"
 #define MyAppExeName     "Clicky.exe"
 
 [Setup]

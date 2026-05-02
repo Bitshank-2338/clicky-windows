@@ -140,6 +140,8 @@ class CompanionPanel(QWidget):
     on_push_to_talk_released = pyqtSignal()
     on_model_changed         = pyqtSignal(str)
     on_document_dropped      = pyqtSignal(str)
+    _sig_copilot_code        = pyqtSignal(str, str)   # (user_code, verification_uri)
+    _sig_copilot_error       = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -148,6 +150,9 @@ class CompanionPanel(QWidget):
         self._setup_window()
         self._build_ui()
         self._position_bottom_right()
+        # Wire internal thread-safe signals → main-thread slots
+        self._sig_copilot_code.connect(self._on_copilot_code)
+        self._sig_copilot_error.connect(self._on_copilot_error)
 
     def _setup_window(self):
         self.setWindowFlags(
@@ -339,29 +344,33 @@ class CompanionPanel(QWidget):
         self._response_label.setText("")
 
     def show_copilot_code(self, user_code: str, verification_uri: str):
-        """Display the GitHub device code prominently in the panel (thread-safe via signal)."""
-        # Must run on the Qt main thread — use a single-shot timer to hop threads
-        from PyQt6.QtCore import QTimer
-        def _do():
-            self.show()   # make sure panel is visible
-            self._response_text = (
-                "── GitHub Copilot Sign-In ──\n\n"
-                f"1.  Open:  {verification_uri}\n\n"
-                f"2.  Enter code:\n\n"
-                f"        {user_code}\n\n"
-                "3.  Click Authorize in GitHub.\n\n"
-                "Clicky will sign in automatically once you authorize."
-            )
-            self._response_label.setText(self._response_text)
-            self._status_label.setText("Waiting for Copilot authorization…")
-        QTimer.singleShot(0, _do)
+        """Thread-safe: can be called from any thread. Emits a queued signal
+        so the UI update always runs on the Qt main thread."""
+        self._sig_copilot_code.emit(user_code, verification_uri)
 
     def show_copilot_error(self, error: str):
-        from PyQt6.QtCore import QTimer
-        def _do():
-            self._response_text = f"Copilot login failed:\n\n{error}"
-            self._response_label.setText(self._response_text)
-        QTimer.singleShot(0, _do)
+        """Thread-safe version of showing a Copilot login error."""
+        self._sig_copilot_error.emit(error)
+
+    # ── Private slots (always run on Qt main thread) ──────────────────────────
+
+    def _on_copilot_code(self, user_code: str, verification_uri: str):
+        self.show()   # bring panel to front
+        self.raise_()
+        self._response_text = (
+            "── GitHub Copilot Sign-In ──\n\n"
+            f"1.  Open:  {verification_uri}\n\n"
+            f"2.  Enter code:\n\n"
+            f"        {user_code}\n\n"
+            "3.  Click Authorize in GitHub.\n\n"
+            "Clicky will sign in automatically once you authorize."
+        )
+        self._response_label.setText(self._response_text)
+        self._status_label.setText("Waiting for Copilot authorization…")
+
+    def _on_copilot_error(self, error: str):
+        self._response_text = f"Copilot login failed:\n\n{error}"
+        self._response_label.setText(self._response_text)
 
     # ── Mouse drag to reposition ──────────────────────────────────────────────
     def mousePressEvent(self, event):
