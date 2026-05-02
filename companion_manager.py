@@ -521,10 +521,14 @@ class CompanionManager(QObject):
                 screenshots = capture_all_screens()
                 images_b64 = [s.base64_jpeg for s in screenshots]
 
-            # 3. Parallel side-work: web search + Claude element locator
-            # IMPORTANT: run the detector for ANY active provider, as long as a
-            # Claude key is configured. This makes Copilot / OpenAI / Ollama
-            # users get pixel-perfect pointing too.
+            # 3. Parallel side-work: web search + element locator
+            #
+            # Pointing now works for EVERY provider:
+            #   • If ANTHROPIC_API_KEY is set → use Claude Computer Use
+            #     (~5px accuracy, gold standard).
+            #   • Otherwise → universal grid-based locator with the active
+            #     vision LLM (Copilot GPT-4o, OpenAI, Gemini, Ollama llava).
+            #     ~25-50px accuracy. Good enough for buttons/menus/icons.
             locate_triggered = is_locate(transcript)
             multistep = is_multistep(transcript)
 
@@ -534,21 +538,45 @@ class CompanionManager(QObject):
                 from ai.web_search import search
                 search_task = asyncio.create_task(search(transcript))
 
-            if (cfg.anthropic_api_key and screenshots and locate_triggered):
-                from ai.element_locator import detect_element
+            if screenshots and locate_triggered:
                 shot = screenshots[0]
-                locate_task = asyncio.create_task(detect_element(
-                    screenshot_jpeg_b64=shot.base64_jpeg,
-                    original_width=shot.width,
-                    original_height=shot.height,
-                    physical_width=shot.physical_width,
-                    physical_height=shot.physical_height,
-                    physical_left=shot.physical_left,
-                    physical_top=shot.physical_top,
-                    dpi_scale=shot.dpi_scale,
-                    screen_index=shot.index,
-                    user_question=transcript,
-                ))
+                if cfg.anthropic_api_key:
+                    # Path A — Anthropic Computer Use (best accuracy)
+                    from ai.element_locator import detect_element
+                    locate_task = asyncio.create_task(detect_element(
+                        screenshot_jpeg_b64=shot.base64_jpeg,
+                        original_width=shot.width,
+                        original_height=shot.height,
+                        physical_width=shot.physical_width,
+                        physical_height=shot.physical_height,
+                        physical_left=shot.physical_left,
+                        physical_top=shot.physical_top,
+                        dpi_scale=shot.dpi_scale,
+                        screen_index=shot.index,
+                        user_question=transcript,
+                    ))
+                else:
+                    # Path B — Universal grid locator (any vision LLM)
+                    try:
+                        from ai.universal_locator import detect_element_universal
+                        llm = self._get_llm()
+                        locate_task = asyncio.create_task(detect_element_universal(
+                            llm=llm,
+                            screenshot_jpeg_b64=shot.base64_jpeg,
+                            original_width=shot.width,
+                            original_height=shot.height,
+                            physical_width=shot.physical_width,
+                            physical_height=shot.physical_height,
+                            physical_left=shot.physical_left,
+                            physical_top=shot.physical_top,
+                            dpi_scale=shot.dpi_scale,
+                            screen_index=shot.index,
+                            user_question=transcript,
+                            model=self._current_model,
+                        ))
+                    except Exception:
+                        # Universal locator should never crash the main flow
+                        locate_task = None
 
             search_results = ""
             if search_task:

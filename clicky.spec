@@ -27,6 +27,7 @@ hidden = [
     "ai.ollama_provider",
     "ai.github_copilot_provider",
     "ai.element_locator",
+    "ai.universal_locator",
     "ai.web_search",
 
     # Lazy STT providers
