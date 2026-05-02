@@ -1,0 +1,12 @@
+# Normalize all text files to LF in the repo, checkout as-is on Windows
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.bat text eol=crlf
+*.iss text eol=crlf
+*.ico binary
+*.png binary
+*.jpg binary
+*.mp3 binary
+*.wav binary

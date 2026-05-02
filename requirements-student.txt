@@ -1,0 +1,35 @@
+# Student version — 100% free, no API keys needed
+# Requires: Ollama installed + llama3.2-vision pulled
+
+# Core UI
+PyQt6>=6.6.0
+
+# Screen capture
+mss>=9.0.1
+Pillow>=10.0.0
+
+# Global hotkeys
+keyboard>=0.13.5
+
+# AI (local only)
+ollama>=0.3.0
+
+# Audio (sounddevice for capture + playback; av decodes MP3 from edge-tts)
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.26.0
+av>=12.0.0
+
+# STT (local, free)
+faster-whisper>=1.0.0
+
+# TTS (free, no key)
+edge-tts>=6.1.10
+
+# Web search (no key)
+# Uses DuckDuckGo Instant API — zero cost, zero config
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.27.0
+aiohttp>=3.9.0

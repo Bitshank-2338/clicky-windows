@@ -1,0 +1,63 @@
+# Core UI
+PyQt6>=6.6.0
+
+# Screen capture
+mss>=9.0.1
+Pillow>=10.0.0
+
+# Global hotkeys
+keyboard>=0.13.5
+
+# AI providers
+anthropic>=0.34.0
+openai>=1.40.0
+ollama>=0.3.0
+
+# Audio capture + playback (no PyAudio — fails to build on Py 3.14)
+sounddevice>=0.4.6
+soundfile>=0.12.1
+numpy>=1.26.0
+av>=12.0.0
+
+# STT - local (free)
+faster-whisper>=1.0.0
+
+# STT - whisper.cpp via pywhispercpp (3-5x faster, same engine as Handy)
+# Optional — if installed, Clicky auto-picks this over faster-whisper.
+# pywhispercpp>=1.2.0
+
+# TTS - free
+edge-tts>=6.1.10
+
+# TTS - premium (optional)
+elevenlabs>=1.0.0
+
+# Web search
+tavily-python>=0.3.0
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.27.0
+aiohttp>=3.9.0
+
+# ── Optional tutor enhancements (install only what you need) ─────────────────
+# Document context (drag-drop PDFs onto the panel)
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# OCR fallback for fine print (also needs Tesseract binary):
+#   https://github.com/UB-Mannheim/tesseract/wiki
+pytesseract>=0.3.10
+
+# Multilingual auto-detect
+langdetect>=1.0.9
+
+# Lesson recording (MP4 capture of the screen + Clicky's annotations)
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.0
+
+# Workflow capture (record clicks + keystrokes)
+pynput>=1.7.7
+
+# Live collaboration (WebRTC) — install when collab signalling server exists
+# aiortc>=1.9.0
