@@ -235,6 +235,25 @@ def main():
         if cfg.llm_provider() == provider:
             panel.refresh_for_provider(provider)
     manager.sig_models_refreshed.connect(_on_models_refreshed)
+
+    # ── Ollama multi-model wiring ─────────────────────────────────────────
+    tray.on_ollama_set_model.connect(manager.set_ollama_model)
+    tray.on_ollama_pull.connect(manager.pull_ollama_model)
+    tray.on_ollama_refresh.connect(manager.refresh_ollama_models)
+
+    # When the installed-model list arrives, push it into the tray submenu
+    manager.sig_ollama_models.connect(tray.set_ollama_models)
+
+    # Surface pull progress as tray toasts so students see download status
+    def _on_ollama_pull_status(name: str, status: str):
+        tray.show_notification("Ollama", status)
+    manager.sig_ollama_pull_status.connect(_on_ollama_pull_status)
+
+    # First-run: poll Ollama if it's the active provider so the menu
+    # actually shows installed models from the start.
+    if cfg.llm_provider() == "ollama":
+        manager.refresh_ollama_models()
+
     tray.on_quit.connect(lambda: (manager.shutdown(), app.quit()))
 
     # ── Global hotkey ─────────────────────────────────────────────────────────

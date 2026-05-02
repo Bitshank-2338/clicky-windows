@@ -20,7 +20,14 @@ class Config:
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY") or None)
     google_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or None)
     ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+    # Legacy single-model knob — still respected as a fallback for both slots
+    # below. New users should prefer OLLAMA_VISION_MODEL / OLLAMA_TEXT_MODEL.
     ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.2-vision"))
+    # Two-slot model selection: vision = screen-aware queries, text = Code Mode
+    # / journal Q&A / no-screenshot replies. Either can be overridden at runtime
+    # via cfg.set_ollama_model("vision"|"text", name).
+    ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "llama3.2-vision"))
+    ollama_text_model:   str = field(default_factory=lambda: os.getenv("OLLAMA_TEXT_MODEL", "") or "llama3.2:3b")
 
     # STT
     deepgram_api_key: Optional[str] = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY") or None)
@@ -117,7 +124,36 @@ class Config:
             "tts": self.tts_provider(),
             "search": self.search_provider(),
             "ollama_model": self.ollama_model,
+            "ollama_vision_model": self.get_ollama_model("vision"),
+            "ollama_text_model":   self.get_ollama_model("text"),
         }
+
+    # ── Ollama runtime model selection ───────────────────────────────────
+
+    def get_ollama_model(self, kind: str = "vision") -> str:
+        """Return the active model for the given kind ("vision" | "text").
+
+        Reads runtime override from CLICKY_OLLAMA_VISION_MODEL /
+        CLICKY_OLLAMA_TEXT_MODEL first, then the dataclass field, then the
+        legacy single-model knob.
+        """
+        env_key = "CLICKY_OLLAMA_VISION_MODEL" if kind == "vision" else "CLICKY_OLLAMA_TEXT_MODEL"
+        runtime = os.environ.get(env_key, "").strip()
+        if runtime:
+            return runtime
+        return self.ollama_vision_model if kind == "vision" else self.ollama_text_model
+
+    def set_ollama_model(self, kind: str, name: str) -> None:
+        """Runtime switch for vision/text Ollama model. Persists for the session."""
+        if kind not in ("vision", "text"):
+            return
+        env_key = "CLICKY_OLLAMA_VISION_MODEL" if kind == "vision" else "CLICKY_OLLAMA_TEXT_MODEL"
+        os.environ[env_key] = (name or "").strip()
+        # Mirror onto the dataclass so describe() picks it up immediately
+        if kind == "vision":
+            self.ollama_vision_model = name
+        else:
+            self.ollama_text_model = name
 
 
 # Singleton

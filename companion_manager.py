@@ -201,6 +201,8 @@ class CompanionManager(QObject):
     sig_error               = pyqtSignal(str)
     sig_copilot_models_done = pyqtSignal(int)             # arg = model count
     sig_models_refreshed    = pyqtSignal(str, int)        # (provider, count)
+    sig_ollama_models       = pyqtSignal(dict)            # {"vision": [...], "text": [...]}
+    sig_ollama_pull_status  = pyqtSignal(str, str)        # (model_name, status_msg)
     sig_arrow               = pyqtSignal(float, float, float, float)
     sig_circle              = pyqtSignal(float, float, float)
     sig_underline           = pyqtSignal(float, float, float)
@@ -849,6 +851,9 @@ class CompanionManager(QObject):
                     self._submit(self._refresh_one_model_list(name))
             except Exception:
                 pass
+        elif name == "ollama":
+            # Surface installed models in the tray immediately
+            self.refresh_ollama_models()
 
     async def _refresh_one_model_list(self, provider: str):
         try:
@@ -869,6 +874,47 @@ class CompanionManager(QObject):
             self.sig_copilot_models_done.emit(len(models))
         except Exception as e:
             self.sig_error.emit(f"Copilot model refresh failed: {e}")
+
+    # ── Ollama model management ──────────────────────────────────────────────
+
+    def refresh_ollama_models(self):
+        """Public — kick off async poll of /api/tags. Result via sig_ollama_models."""
+        self._submit(self._refresh_ollama_models())
+
+    async def _refresh_ollama_models(self):
+        try:
+            from ai.ollama_provider import OllamaProvider
+            classified = await OllamaProvider().list_models_classified()
+            self.sig_ollama_models.emit(classified)
+        except Exception as e:
+            self.sig_error.emit(f"Ollama model list failed: {e}")
+
+    def set_ollama_model(self, kind: str, name: str):
+        """Tray callback — update the active vision/text model. No restart needed."""
+        cfg.set_ollama_model(kind, name)
+        # Force the provider instance to re-read cfg on next call
+        if cfg.llm_provider() == "ollama":
+            self._llm = None
+
+    def pull_ollama_model(self, name: str):
+        """Trigger `ollama pull <name>` in the background. Status via sig_ollama_pull_status."""
+        self._submit(self._pull_ollama_model(name))
+
+    async def _pull_ollama_model(self, name: str):
+        from ai.ollama_models_registry import pull_model
+        self.sig_ollama_pull_status.emit(name, f"Pulling {name}…")
+
+        def _progress(msg: str):
+            if msg:
+                self.sig_ollama_pull_status.emit(name, msg)
+
+        ok = await pull_model(name, cfg.ollama_host, on_progress=_progress)
+        if ok:
+            self.sig_ollama_pull_status.emit(name, f"✓ {name} ready")
+            # Refresh the installed list so the tray menu picks it up
+            await self._refresh_ollama_models()
+        else:
+            self.sig_ollama_pull_status.emit(name, f"✗ Pull failed for {name}")
 
     def set_web_search(self, enabled: bool):
         self._web_search_enabled = enabled
