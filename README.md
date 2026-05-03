@@ -9,7 +9,7 @@ Clicky is a Windows port of [farzaa/clicky](https://github.com/farzaa/clicky) (o
 
 ## Hi, this is Clicky 👋
 
-<video src="https://github.com/Bitshank-2338/clicky-windows/releases/download/v0.1.0-demo/2026-05-03.16-50-12.mp4" controls width="100%"></video>
+[![Clicky Demo — click to watch](assets/demo-thumbnail.jpg)](https://github.com/Bitshank-2338/clicky-windows/releases/download/v0.1.0-demo/2026-05-03.16-50-12.mp4)
 
 Clicky is a little AI buddy that **lives next to your cursor**. You hold a hotkey, ask it something about your screen, and it talks back — pointing at buttons, walking you through steps, drawing arrows on your screen. Think of it as having a patient tutor sitting beside you while you learn anything: video editing, coding, a new app, whatever.
 
