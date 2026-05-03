@@ -54,13 +54,25 @@ def _script_heuristic(text: str) -> str:
 def detect_language(text: str) -> str:
     if not text or not text.strip():
         return "en"
+
+    # Script heuristic first — fastest and deterministic for non-Latin
+    script = _script_heuristic(text)
+    if script != "en":
+        return script
+
+    # For Latin-script languages (Spanish, French, German, etc.)
+    # try langdetect; fall back gracefully if not installed or text too short
     try:
         from langdetect import detect, DetectorFactory   # type: ignore
         DetectorFactory.seed = 0
-        code = detect(text).split("-")[0].lower()
-        return code if code in _LANG_VOICE else _script_heuristic(text)
+        # langdetect is unreliable on very short strings; require ≥ 12 chars
+        if len(text.strip()) >= 12:
+            code = detect(text).split("-")[0].lower()
+            return code if code in _LANG_VOICE else "en"
     except Exception:
-        return _script_heuristic(text)
+        pass
+
+    return "en"
 
 
 def voice_for(code: str) -> str:
@@ -75,7 +87,13 @@ def language_directive(code: str) -> str:
     """Add to system prompt so the LLM matches the user's language."""
     if code == "en":
         return ""
+    name = name_for(code)
     return (
-        f"\n\nLANGUAGE: The user is writing/speaking in {name_for(code)}. "
-        f"Respond entirely in {name_for(code)}. Match their tone and register."
+        f"\n\nLANGUAGE (MANDATORY — never ignore this rule): "
+        f"The user is communicating in {name}. "
+        f"You MUST respond ENTIRELY in {name} — every single word of your reply. "
+        f"Do NOT switch to English mid-response. "
+        f"UI element names and technical terms may stay in their original form "
+        f"if no {name} equivalent exists, but all explanations must be in {name}. "
+        f"Match the user's tone and register."
     )
