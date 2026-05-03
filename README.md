@@ -7,6 +7,19 @@ Clicky is a Windows port of [farzaa/clicky](https://github.com/farzaa/clicky) (o
 
 ---
 
+## Hi, this is Clicky 👋
+
+<!-- DEMO VIDEO — replace src with your YouTube/MP4 link -->
+https://github.com/user-attachments/assets/YOUR_VIDEO_ID_HERE
+
+Clicky is a little AI buddy that **lives next to your cursor**. You hold a hotkey, ask it something about your screen, and it talks back — pointing at buttons, walking you through steps, drawing arrows on your screen. Think of it as having a patient tutor sitting beside you while you learn anything: video editing, coding, a new app, whatever.
+
+No more Alt-Tab to ChatGPT. No more typing out descriptions of what's on your screen. Just hold **Ctrl + Alt + Space**, speak, and Clicky handles the rest.
+
+Works **100% offline** with Ollama, or plug in your Claude / OpenAI / Gemini / GitHub Copilot key for the full experience.
+
+---
+
 ## What it looks like
 
 ```
@@ -43,7 +56,9 @@ The blue triangle sits **35 px right / 25 px below** your real cursor. When you 
 - Detects active window title for per-app memory
 
 ### 🎯 Pixel-Perfect Pointing
-- **Claude Computer Use API** locates UI elements at exact pixel coordinates
+- **Two-stage grid locator** works with *any* vision LLM — Claude, Copilot, OpenAI, Gemini, Ollama
+- Stage 1: draws a numbered 12×8 grid on the screenshot, LLM picks the cell
+- Stage 2: zooms into that 3×3 cell area, runs a 6×6 fine-grid pass for sub-cell precision
 - Bezier arc flight with configurable teacher pace
 - Pulsing highlight ring + speech bubble label on the target
 - Works on any DPI scale (4K, HiDPI, multi-monitor setups)
@@ -266,14 +281,29 @@ A blue dot appears in your system tray. Clicky is now running.
 No API keys at all — uses local AI, local STT, free TTS:
 
 ```env
-OLLAMA_MODEL=llava
+OLLAMA_VISION_MODEL=qwen2-vl:7b
+OLLAMA_TEXT_MODEL=qwen2.5-coder:7b
 ```
 
-1. Install [Ollama](https://ollama.ai) → `ollama pull llava` → `ollama serve`
-2. `pip install -r requirements.txt`
-3. `python main.py`
+1. Install [Ollama](https://ollama.ai) → run `ollama serve`
+2. Pull models: `ollama pull qwen2-vl:7b && ollama pull qwen2.5-coder:7b`
+3. `pip install -r requirements.txt`
+4. `python main.py`
 
-**Limitations vs paid:** Slower responses, no pixel-perfect pointing (needs `ANTHROPIC_API_KEY`), web search uses DuckDuckGo only.
+Clicky uses **two Ollama model slots**: a vision model for screen-aware questions (pointing, "what's on screen?") and a text model for Code Mode / journal Q&A. Switch between them at any time from the tray: **Tray → Ollama → Vision model / Text model**.
+
+**Recommended free models (Tray → Ollama → Pull recommended…):**
+
+| Slot | Model | Size | Good for |
+|---|---|---|---|
+| Vision | `qwen2-vl:7b` | 5 GB | Screen reading, pointing — best quality |
+| Vision | `llama3.2-vision:11b` | 8 GB | Alternative vision model |
+| Vision | `llava:7b` | 4 GB | Fastest option |
+| Text | `qwen2.5-coder:7b` | 4 GB | Code questions — excellent |
+| Text | `llama3.2:3b` | 2 GB | Tiny, fits any GPU |
+| Text | `mistral:7b` | 4 GB | General Q&A |
+
+**Limitations vs paid:** Slower responses, web search uses DuckDuckGo only.
 
 ---
 
@@ -477,7 +507,9 @@ clicky-windows/
 | `ELEVENLABS_VOICE_ID` | — | Your ElevenLabs voice clone ID |
 | `TAVILY_API_KEY` | — | Tavily search (upgrades DuckDuckGo) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2-vision` | Ollama model name |
+| `OLLAMA_MODEL` | `llama3.2-vision` | Legacy single-model fallback |
+| `OLLAMA_VISION_MODEL` | *(empty)* | Ollama model for screen-aware tasks (pointing, describe screen) |
+| `OLLAMA_TEXT_MODEL` | *(empty)* | Ollama model for Code Mode + journal Q&A |
 | `CLICKY_HOTKEY` | `ctrl+alt+space` | Global push-to-talk combo |
 | `CLICKY_STT` | *(auto)* | Force STT: `deepgram`/`openai`/`whisper_cpp`/`faster_whisper` |
 | `CLICKY_ACTIVE_LLM` | *(auto)* | Force LLM: `claude`/`openai`/`copilot`/`gemini`/`ollama` |
@@ -498,8 +530,9 @@ clicky-windows/
 → Press Esc to cancel
 
 **Pointing at wrong location**
-→ Pixel-perfect pointing requires `ANTHROPIC_API_KEY`
-→ Without it the LLM guesses from the screenshot (less accurate)
+→ Make sure your active LLM supports vision (Copilot gpt-4o, Claude, Gemini 1.5+, or a vision Ollama model)
+→ For Ollama: set a vision model via **Tray → Ollama → Vision model**
+→ The universal two-stage grid locator works with every vision provider — no Anthropic key required
 
 **GitHub Copilot auth fails**
 → Re-run: Tray → Model → Sign in to GitHub Copilot…
@@ -520,6 +553,51 @@ clicky-windows/
 **Panel doesn't appear**
 → Right-click tray icon → Show Panel
 → Or double-click the tray icon
+
+---
+
+## Contributing
+
+Clicky is open to contributors from **anywhere in the world**. Whether you're a student who uses it every day, a developer who wants to add a feature, or someone who speaks a language we haven't supported yet — you're welcome here.
+
+### Ways to contribute
+
+- 🐛 **Bug reports** — open an [Issue](https://github.com/Bitshank-2338/clicky-windows/issues) with steps to reproduce
+- 💡 **Feature ideas** — open an Issue tagged `enhancement`
+- 🌍 **Translations** — add your language to `tutor_features/multilang.py`
+- 🔌 **New LLM / STT / TTS providers** — follow the pattern in `ai/base_provider.py`
+- 🛠️ **Skills** — share your custom voice-trigger skills in a PR
+- 📚 **Docs** — better explanations, screenshots, GIFs
+
+### How to send a pull request
+
+```bash
+# 1. Fork on GitHub, then clone your fork
+git clone https://github.com/YOUR_USERNAME/clicky-windows.git
+cd clicky-windows
+
+# 2. Create a branch
+git checkout -b feat/your-feature-name
+
+# 3. Make your changes, then commit
+git add .
+git commit -m "feat: describe what you added"
+
+# 4. Push + open a PR against main
+git push origin feat/your-feature-name
+```
+
+### Code style
+
+- Python 3.11+ — type hints encouraged, `async/await` for I/O
+- Keep providers self-contained in `ai/`, `audio/stt/`, `audio/tts/`
+- New features belong in `tutor_features/` — one file per feature
+- All cross-thread UI updates go through `pyqtSignal` — no direct widget calls from threads
+- Test locally with `python main.py` before opening a PR
+
+### First-time contributor?
+
+Look for Issues tagged **`good first issue`** — these are small, well-scoped tasks that don't require deep knowledge of the codebase. Just comment "I'll take this" and we'll help you get started.
 
 ---
 
