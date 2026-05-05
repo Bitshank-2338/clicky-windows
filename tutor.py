@@ -104,6 +104,37 @@ QUIZ_REVIEW_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Identity questions ────────────────────────────────────────────────────────
+# OpenAI / Claude refuse to identify people in images even when the answer is
+# trivially in their training data. So when the user asks "who is X" / "tell me
+# about X" / "what does X do" — we strip the screenshot and answer from text +
+# web search. is_identity_question() returns True when:
+#   • the query starts with a who/what-is question word, AND
+#   • the rest looks like a proper noun (a person/thing name, not a generic word)
+#
+# False on things like "who is on my screen", "what is this", "who am I" — those
+# legitimately want the screenshot.
+IDENTITY_RE = re.compile(
+    r"^\s*"
+    r"(who\s+(is|are|was|were)|"
+    r"tell\s+me\s+about|"
+    r"what\s+(is|does|do)|"
+    r"info\s+(about|on)|"
+    r"how\s+old\s+is)"
+    r"\s+"
+    # require what follows to NOT be a screen-referring phrase
+    r"(?!"
+    r"this|that|it|my\s+screen|on\s+(my\s+)?screen|going\s+on|"
+    r"happening|the\s+screen|here|i\s|i\b)"
+    r".+",
+    re.IGNORECASE,
+)
+
+
+def is_identity_question(q: str) -> bool:
+    """Detects 'who is <person>'-style queries that should NOT include a screenshot."""
+    return bool(q) and IDENTITY_RE.match(q.strip()) is not None
+
 
 def is_repeat(q: str) -> bool:
     return REPEAT_RE.match(q or "") is not None

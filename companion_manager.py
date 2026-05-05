@@ -24,6 +24,7 @@ from tutor import (
     active_window_title, app_key,
     is_locate, is_multistep, is_next, is_stop, is_sensitive_window,
     is_repeat, is_journal_today, is_journal_week, is_quiz_review,
+    is_identity_question,
 )
 from tutor_features import (
     journal, pdf_context, ocr, code_mode, lesson_recorder,
@@ -115,8 +116,13 @@ HARD RULES (never break):
      over your own memory for anything recent (news, rankings, current events,
      "who is", "what is the best", "latest", "top", etc.).
 
-  5. PUBLIC figures, companies, products — answer freely. Never refuse as
-     "personal / sensitive".
+  5. PUBLIC figures, celebrities, YouTubers, athletes, politicians, companies,
+     products, brands — ANSWER FREELY using your training data + search results.
+     NEVER refuse with "I can't identify people" / "I can't help with that" /
+     "personal or sensitive". The user is asking a tutor question, not running
+     facial recognition — these are public figures with public Wikipedia pages.
+     If asked "who is MrBeast" — say "MrBeast (Jimmy Donaldson) is an American
+     YouTuber known for…". Same for any other public person.
 
   6. ANNOTATE for emphasis: when teaching where multiple things matter, you
      MAY emit annotation tags (in addition to one POINT tag):
@@ -519,8 +525,16 @@ class CompanionManager(QObject):
                 self.sig_error.emit(f"Skill error: {e}")
 
             # 2. Screen capture — skipped if sensitive window (password manager etc.)
+            #
+            # ALSO skipped for "who is X" / "tell me about X" identity questions:
+            # OpenAI + Claude refuse to identify people in screenshots even when
+            # the answer is in their training data ("Sorry I can't identify the
+            # person in images"). Stripping the screenshot lets the LLM answer
+            # from training data + web search instead, which is what the user
+            # actually wants when they ask "who is MrBeast" while on YouTube.
             sensitive = self._privacy_guard and is_sensitive_window(title)
-            if sensitive:
+            identity_q = is_identity_question(transcript)
+            if sensitive or identity_q:
                 screenshots = []
                 images_b64 = []
             else:
