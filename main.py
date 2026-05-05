@@ -3,7 +3,9 @@ Clicky for Windows — Entry Point.
 Boots Qt, spawns overlay+panel+tray, starts ambient mic listener, binds hotkey.
 """
 
+import os
 import sys
+from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
@@ -254,6 +256,60 @@ def main():
     if cfg.llm_provider() == "ollama":
         manager.refresh_ollama_models()
 
+    # Setup wizard (re-run) + diagnostics
+    def _run_setup_again():
+        from ui.setup_wizard import SetupWizard
+        wiz = SetupWizard()
+        wiz.show()
+        _setup_keepalive[0] = wiz
+    tray.on_run_setup.connect(_run_setup_again)
+
+    def _save_diagnostics():
+        import datetime, json, platform, traceback
+        from ai import ollama_bootstrap as ob
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        out = Path(base) / "Clicky" / f"diagnostics-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt"
+        try:
+            providers_d = cfg.describe()
+        except Exception:
+            providers_d = {}
+        report = []
+        report.append(f"Clicky diagnostics — {datetime.datetime.now().isoformat()}")
+        report.append(f"Python: {sys.version.split()[0]}")
+        report.append(f"Platform: {platform.platform()}")
+        report.append(f"Active LLM: {providers_d.get('llm', '?')}")
+        report.append(f"STT: {providers_d.get('stt', '?')}  TTS: {providers_d.get('tts', '?')}")
+        report.append("")
+        report.append("─── Ollama ───")
+        try:
+            report.append(f"Host: {cfg.ollama_host}")
+            report.append(f"Text model:   {cfg.ollama_text_model}")
+            report.append(f"Vision model: {cfg.ollama_vision_model}")
+            report.append(f"Binary on PATH: {ob.is_ollama_installed()}")
+            report.append(f"Server reachable: {ob.is_ollama_running()}")
+            if ob.is_ollama_running():
+                report.append(f"Installed models: {ob.list_installed_models()}")
+        except Exception:
+            report.append(traceback.format_exc())
+        report.append("")
+        report.append("─── GitHub Copilot ───")
+        try:
+            from ai.github_copilot_provider import is_authenticated, _token_path
+            report.append(f"Token file: {_token_path()}  exists={_token_path().exists()}")
+            report.append(f"Authenticated: {is_authenticated()}")
+        except Exception:
+            report.append(traceback.format_exc())
+        try:
+            out.write_text("\n".join(report), encoding="utf-8")
+            tray.show_notification("Diagnostics saved", str(out))
+            try:
+                os.startfile(str(out))
+            except Exception:
+                pass
+        except Exception as e:
+            tray.show_notification("Diagnostics failed", str(e))
+    tray.on_diagnostics.connect(_save_diagnostics)
+
     tray.on_quit.connect(lambda: (manager.shutdown(), app.quit()))
 
     # ── Global hotkey ─────────────────────────────────────────────────────────
@@ -278,7 +334,30 @@ def main():
         f"Say 'Clicky' or hold {cfg.hotkey}  |  LLM: {providers['llm']}",
     )
 
+    # ── First-run setup wizard ────────────────────────────────────────────────
+    # Show the Ollama install / model pull walkthrough on the first launch.
+    # If everything is already wired up, the helper is a no-op.
+    try:
+        from ui.setup_wizard import maybe_show_setup_wizard, SetupWizard
+
+        # Force-show via env var (handy for testing).
+        if os.environ.get("CLICKY_FORCE_SETUP", "").strip() in ("1", "true", "yes"):
+            wiz = SetupWizard()
+            wiz.show()
+            _setup_keepalive[0] = wiz
+        else:
+            wiz = maybe_show_setup_wizard()
+            if wiz is not None:
+                _setup_keepalive[0] = wiz   # keep a reference so it isn't GC'd
+    except Exception as e:
+        print(f"[setup-wizard] skipped: {e}")
+
     sys.exit(app.exec())
+
+
+# Module-level slot used to keep a reference to the setup wizard alive while
+# Qt is running (PyQt will GC it otherwise and the dialog will vanish).
+_setup_keepalive: list = [None]
 
 
 if __name__ == "__main__":

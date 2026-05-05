@@ -30,6 +30,10 @@ hidden = [
     "ai.element_locator",
     "ai.universal_locator",
     "ai.web_search",
+    "ai.ollama_bootstrap",
+
+    # First-run setup wizard
+    "ui.setup_wizard",
 
     # Lazy STT providers
     "audio.stt.deepgram_stt",

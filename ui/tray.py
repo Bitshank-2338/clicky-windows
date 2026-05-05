@@ -49,6 +49,8 @@ class TrayManager(QObject):
     on_workflow_stop      = pyqtSignal()
     on_journal_open       = pyqtSignal()
     on_attach_doc         = pyqtSignal()
+    on_run_setup          = pyqtSignal()
+    on_diagnostics        = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -239,6 +241,15 @@ class TrayManager(QObject):
         host.triggered.connect(self.on_collab_start)
         join = collab_menu.addAction("Join with code…")
         join.triggered.connect(self.on_collab_join)
+
+        menu.addSeparator()
+
+        # ── Setup / Diagnostics ──
+        setup_menu = menu.addMenu("Setup && Diagnostics")
+        run_setup = setup_menu.addAction("Run setup wizard again…")
+        run_setup.triggered.connect(self.on_run_setup)
+        diag = setup_menu.addAction("Save diagnostics report…")
+        diag.triggered.connect(self.on_diagnostics)
 
         menu.addSeparator()
 

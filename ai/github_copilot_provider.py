@@ -76,6 +76,21 @@ def _models_cache_path() -> Path:
 
 # ─── Device-flow login ────────────────────────────────────────────────────────
 
+def _login_log_path() -> Path:
+    return _data_dir() / "copilot_login.log"
+
+
+def _log_login(line: str) -> None:
+    """Append a timestamped line to the login log so we can debug failures
+    after the fact (the user can grab this from %LOCALAPPDATA%\\Clicky\\)."""
+    try:
+        from datetime import datetime
+        with open(_login_log_path(), "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().isoformat(timespec='seconds')}] {line}\n")
+    except Exception:
+        pass
+
+
 async def device_login(open_browser: bool = True,
                        on_code: "Optional[callable]" = None) -> str:
     """Run the GitHub device-code OAuth flow. Returns the github access token.
@@ -84,6 +99,7 @@ async def device_login(open_browser: bool = True,
     device code is known, before we start polling. The UI uses this to display
     the code in the panel instead of (or in addition to) the terminal.
     """
+    _log_login("=== device_login() started ===")
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
             DEVICE_CODE_URL,
@@ -98,6 +114,7 @@ async def device_login(open_browser: bool = True,
     device_code = d["device_code"]
     interval = max(5, int(d.get("interval", 5)))
     expires_in = int(d.get("expires_in", 900))
+    _log_login(f"Got device code. user_code={user_code} interval={interval}s expires_in={expires_in}s")
 
     print("\n" + "─" * 56)
     print("  GITHUB COPILOT LOGIN")
@@ -121,24 +138,32 @@ async def device_login(open_browser: bool = True,
             pass
 
     deadline = time.time() + expires_in
+    poll_count = 0
     async with httpx.AsyncClient(timeout=15) as client:
         while time.time() < deadline:
             await asyncio.sleep(interval)
-            r = await client.post(
-                ACCESS_TOKEN_URL,
-                data={
-                    "client_id": VSCODE_CLIENT_ID,
-                    "device_code": device_code,
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                },
-                headers={"Accept": "application/json"},
-            )
+            poll_count += 1
+            try:
+                r = await client.post(
+                    ACCESS_TOKEN_URL,
+                    data={
+                        "client_id": VSCODE_CLIENT_ID,
+                        "device_code": device_code,
+                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    },
+                    headers={"Accept": "application/json"},
+                )
+            except Exception as e:
+                _log_login(f"poll #{poll_count} network error: {e}")
+                continue
             if r.status_code != 200:
+                _log_login(f"poll #{poll_count} HTTP {r.status_code}")
                 continue
             body = r.json()
             if "access_token" in body:
                 token = body["access_token"]
                 _token_path().write_text(json.dumps({"access_token": token}))
+                _log_login(f"✅ Signed in after {poll_count} polls. Token saved.")
                 print("✅  Signed in. Token saved to", _token_path())
                 # Eagerly fetch the model list so the panel reflects what
                 # the user actually has access to *right now*.
@@ -150,13 +175,19 @@ async def device_login(open_browser: bool = True,
                     print(f"   (Could not refresh model list: {e})")
                 return token
             if body.get("error") == "authorization_pending":
+                if poll_count % 6 == 0:   # log roughly every 30s
+                    _log_login(f"poll #{poll_count}: still pending…")
                 continue
             if body.get("error") == "slow_down":
                 interval += 5
+                _log_login(f"poll #{poll_count}: slow_down — interval now {interval}s")
                 continue
             if body.get("error") in ("expired_token", "access_denied"):
+                _log_login(f"poll #{poll_count}: terminal error {body.get('error')}")
                 raise RuntimeError(f"Copilot login failed: {body.get('error')}")
+            _log_login(f"poll #{poll_count}: unexpected body keys={list(body.keys())}")
 
+    _log_login(f"❌ Timed out after {poll_count} polls.")
     raise TimeoutError("Copilot device-flow login timed out.")
 
 
