@@ -236,11 +236,15 @@ class TrayManager(QObject):
         wf_stop.triggered.connect(self.on_workflow_stop)
 
         # ── Live collaboration ──
-        collab_menu = menu.addMenu("Live Session")
-        host = collab_menu.addAction("Start hosting")
-        host.triggered.connect(self.on_collab_start)
-        join = collab_menu.addAction("Join with code…")
-        join.triggered.connect(self.on_collab_join)
+        # NOTE: WebRTC signalling server isn't shipped yet, so this whole
+        # menu is hidden until tutor_features/collab.py gets a real backend.
+        # The signals are still defined on this object so any existing
+        # bindings in main.py don't crash on connect().
+        # collab_menu = menu.addMenu("Live Session")  # disabled in this build
+        # host = collab_menu.addAction("Start hosting")
+        # host.triggered.connect(self.on_collab_start)
+        # join = collab_menu.addAction("Join with code…")
+        # join.triggered.connect(self.on_collab_join)
 
         menu.addSeparator()
 

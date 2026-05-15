@@ -1077,29 +1077,17 @@ class CompanionManager(QObject):
     # ── Live collaboration ───────────────────────────────────────────────────
 
     def collab_start_host(self):
-        if self._collab is None:
-            self._collab = collab.CollabSession()
-        self._submit(self._collab_host())
-
-    async def _collab_host(self):
-        try:
-            code = await self._collab.start_host()
-            await self._reply_local(
-                f"Live session started. Share the code: {code}"
-            )
-        except Exception as e:
-            self.sig_error.emit(f"Collab start failed: {e}")
+        """Live-session host. Disabled — see tutor_features/collab.py."""
+        self.sig_error.emit(
+            "Live Session: not available in this build. "
+            "Requires a WebRTC signalling server (planned for a future release)."
+        )
 
     def collab_join(self, code: str):
-        if self._collab is None:
-            self._collab = collab.CollabSession()
-        self._submit(self._collab_join(code))
-
-    async def _collab_join(self, code: str):
-        ok = await self._collab.join(code)
-        await self._reply_local(
-            f"Joined session {code}." if ok else
-            f"Could not join {code} (signalling server not configured yet)."
+        """Live-session join. Disabled — see tutor_features/collab.py."""
+        self.sig_error.emit(
+            "Live Session: not available in this build. "
+            "Requires a WebRTC signalling server (planned for a future release)."
         )
 
     # ── Voice picker (ElevenLabs / Edge) ─────────────────────────────────────

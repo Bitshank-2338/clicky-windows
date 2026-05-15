@@ -33,6 +33,13 @@ edge-tts>=6.1.10
 uiautomation>=2.0.0
 rapidocr-onnxruntime>=1.2.0
 
+# Web search (DDG anti-bot bypass — handles rotating endpoints/UAs)
+ddgs>=6.0.0
+
+# Lesson recorder (bundled ffmpeg so users don't need a system install)
+imageio>=2.30.0
+imageio-ffmpeg>=0.4.9
+
 # Cloud AI providers (optional — OpenAI key / Anthropic key)
 openai>=1.0.0
 anthropic>=0.100.0
