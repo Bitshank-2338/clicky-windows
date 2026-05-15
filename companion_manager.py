@@ -560,7 +560,25 @@ class CompanionManager(QObject):
 
             if screenshots and locate_triggered:
                 shot = screenshots[0]
-                if cfg.anthropic_api_key:
+                # Pointing accuracy upgrade: try the hybrid pointer first.
+                # Tier 1 (UIA tree) is ~5ms and pixel-perfect; tier 2 (OCR)
+                # handles canvas apps. Falls through to the vision LLM grid
+                # below only when both whiff.
+                try:
+                    from ai.hybrid_pointer import find_target as _hybrid_find
+                    target = _hybrid_find(
+                        transcript,
+                        screenshot=shot,
+                        llm_provider=self._get_llm(),
+                    )
+                except Exception:
+                    target = None
+
+                if target is not None and target.source in ("uia", "ocr"):
+                    async def _ready(t=target):
+                        return (t.x, t.y)
+                    locate_task = asyncio.create_task(_ready())
+                elif cfg.anthropic_api_key:
                     # Path A — Anthropic Computer Use (best accuracy)
                     from ai.element_locator import detect_element
                     locate_task = asyncio.create_task(detect_element(

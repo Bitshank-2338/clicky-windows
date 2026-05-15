@@ -29,6 +29,10 @@ edge-tts>=6.1.10
 # Web search (no key)
 # Uses DuckDuckGo Instant API — zero cost, zero config
 
+# Windows-native pointer accuracy upgrade (UIA tree + offline OCR fallback)
+uiautomation>=2.0.0
+rapidocr-onnxruntime>=1.2.0
+
 # Cloud AI providers (optional — OpenAI key / Anthropic key)
 openai>=1.0.0
 anthropic>=0.100.0
