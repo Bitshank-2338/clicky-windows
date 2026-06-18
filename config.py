@@ -84,8 +84,25 @@ class Config:
         return out
 
     def set_active_llm(self, name: str) -> None:
-        """Runtime switch — next query uses this provider."""
-        os.environ["CLICKY_ACTIVE_LLM"] = name.lower()
+        """Runtime switch — next query uses this provider. Persisted to .env."""
+        name = name.lower()
+        os.environ["CLICKY_ACTIVE_LLM"] = name
+        # Write to .env so the choice survives restarts
+        env_path = _HERE / ".env"
+        try:
+            lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True) if env_path.exists() else []
+            key = "CLICKY_ACTIVE_LLM"
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith(key + "=") or line.startswith(key + " ="):
+                    lines[i] = f"{key}={name}\n"
+                    found = True
+                    break
+            if not found:
+                lines.append(f"\n{key}={name}\n")
+            env_path.write_text("".join(lines), encoding="utf-8")
+        except Exception:
+            pass  # non-fatal — runtime switch still works via os.environ
 
     def stt_provider(self) -> str:
         # Allow explicit override via env (so users can force whisper_cpp etc.)

@@ -33,6 +33,40 @@ from tutor_features import (
 import skills as skills_pkg
 
 
+def _ensure_ollama_running():
+    """Start Ollama if it isn't already running. Waits up to 8 s for it to be ready."""
+    import subprocess
+    import urllib.request
+
+    url = "http://localhost:11434/api/tags"
+    for _ in range(2):
+        try:
+            urllib.request.urlopen(url, timeout=2)
+            return  # already up
+        except Exception:
+            pass
+
+    # Not responding — launch it detached so it survives the Python process
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    except FileNotFoundError:
+        return  # ollama not installed, provider will fail gracefully
+
+    # Wait up to 8 s for the server to come up
+    for _ in range(16):
+        time.sleep(0.5)
+        try:
+            urllib.request.urlopen(url, timeout=1)
+            return
+        except Exception:
+            pass
+
+
 def _build_system_prompt(
     window_title: str = "",
     lesson_step: int = 0,
@@ -377,6 +411,7 @@ class CompanionManager(QObject):
                 from ai.github_copilot_provider import GitHubCopilotProvider
                 self._llm = GitHubCopilotProvider()
             else:
+                _ensure_ollama_running()
                 from ai.ollama_provider import OllamaProvider
                 self._llm = OllamaProvider()
         return self._llm
