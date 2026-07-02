@@ -214,6 +214,7 @@ class CursorOverlay(QWidget):
         # the student studies it.
         self._annotations: list[dict] = []
         self._draw_queue_end: float = 0.0   # when the last queued stroke finishes
+        self._last_tip = None               # pen position held between strokes
 
         # Thinking spinner phase
         self._spin_phase: float = 0.0
@@ -339,6 +340,7 @@ class CursorOverlay(QWidget):
     def clear_annotations(self):
         self._annotations = []
         self._draw_queue_end = 0.0
+        self._last_tip = None
 
     def _active_stroke_tip(self):
         """Pen tip of the currently-animating shape, or None. The buddy
@@ -460,11 +462,18 @@ class CursorOverlay(QWidget):
             self.update()
             return
 
-        # ── Drawing mode: buddy rides the pen tip of the active stroke ──
+        # ── Drawing mode: buddy rides the pen tip of the active stroke, and
+        # holds at the last tip between strokes while the lesson is still
+        # playing (no yo-yo back to the mouse cursor mid-lesson) ──
         tip = self._active_stroke_tip()
         if tip is not None:
+            self._last_tip = tip
+        elif time.monotonic() >= self._draw_queue_end + 2.5:
+            self._last_tip = None   # lesson over — resume cursor follow
+        hold = tip or self._last_tip
+        if hold is not None:
             # Strong pull toward the pen tip — smooth but keeps up with it
-            tx, ty = tip[0] + 6, tip[1] + 6
+            tx, ty = hold[0] + 6, hold[1] + 6
             self._display_pos = QPointF(
                 self._display_pos.x() + (tx - self._display_pos.x()) * 0.45,
                 self._display_pos.y() + (ty - self._display_pos.y()) * 0.45,

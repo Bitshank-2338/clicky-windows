@@ -33,6 +33,10 @@ edge-tts>=6.1.10
 uiautomation>=2.0.0
 rapidocr-onnxruntime>=1.2.0
 
+# Local figure detection (triangles/rects/circles) for accurate on-screen
+# teaching drawings — works with ANY LLM since coords come pre-computed
+opencv-python-headless>=4.8.0
+
 # Web search (DDG anti-bot bypass — handles rotating endpoints/UAs)
 ddgs>=6.0.0
 

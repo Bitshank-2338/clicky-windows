@@ -7,6 +7,7 @@ Orchestrates:
 """
 
 import asyncio
+import math
 import re
 import threading
 import time
@@ -200,14 +201,22 @@ HARD RULES (never break):
      Place TEXT next to what it names, never covering it. Use up to ~10 shapes
      for a full lesson, 1-2 for a quick highlight.
 
-     ACCURACY DISCIPLINE (critical): before your first drawing tag, study the
-     screenshot and fix the figure's exact bounding box in normalized coords
-     (left x, top y, right x, bottom y). Derive EVERY stroke endpoint from
-     that box — shared vertices must reuse IDENTICAL coordinates (a triangle's
-     corner appears in two LINE tags: same numbers both times). Strokes must
-     land ON the figure's actual edges; when unsure, err 5-10 units INSIDE
-     the figure rather than outside. If there is no figure on screen, draw
-     your own diagram in a clear empty area instead.
+     ACCURACY DISCIPLINE (critical): if DETECTED FIGURES are listed in this
+     prompt, you MUST copy those vertex numbers into your tags EXACTLY — they
+     are ground truth from Clicky's local vision. Only estimate coordinates
+     for things the detector didn't list. When estimating: fix the figure's
+     bounding box first, derive every endpoint from it, and reuse IDENTICAL
+     numbers for shared vertices (a triangle's corner appears in two LINE
+     tags: same numbers both times). When unsure, err 5-10 units INSIDE the
+     figure. If there is no figure on screen, draw your own diagram in a
+     clear empty area.
+
+     NARRATION SYNC: Clicky speaks your response sentence by sentence and
+     draws each sentence's tags WHILE saying that sentence. So: put every tag
+     immediately after the words that describe it, spread tags across the
+     lesson (1-2 per sentence), and never dump all tags at the start or end.
+     Short sentence, stroke. Short sentence, stroke. That's the rhythm of a
+     teacher at a whiteboard.
      Example — right triangle visible on screen, user asks about Pythagoras:
        "See this corner? [ANGLE:320,620,25:yellow] That right angle is what
         makes the theorem work. This vertical side [LINE:320,620->320,380:red]
@@ -345,6 +354,9 @@ class CompanionManager(QObject):
         # Screenshots from the current turn — needed to map the LLM's
         # normalized 0-1000 tag coordinates back to logical screen pixels.
         self._screens_ctx: list = []
+        # Figures detected on screen this turn (normalized vertices) — used
+        # for prompt injection and for snapping sloppy stroke endpoints.
+        self._figures_ctx: list = []
         # Current lesson: sequence of pending steps for multi-step tutorials
         self._lesson_steps: list[str] = []
         self._lesson_step_idx: int = 0
@@ -653,6 +665,21 @@ class CompanionManager(QObject):
             self._screens_ctx = screenshots
             self.sig_clear_drawings.emit()
 
+            # Local figure detection (OpenCV) — finds triangles/rects/circles
+            # with EXACT normalized vertices so any LLM (even small Ollama
+            # models) can draw on them accurately by echoing the numbers.
+            self._figures_ctx = []
+            fig_extra = ""
+            if screenshots:
+                try:
+                    from ai.figure_detector import detect_figures, figures_prompt
+                    self._figures_ctx = await asyncio.to_thread(
+                        detect_figures, screenshots[0].base64_jpeg,
+                    )
+                    fig_extra = figures_prompt(self._figures_ctx)
+                except Exception:
+                    self._figures_ctx = []
+
             # 3. Parallel side-work: web search + element locator
             #
             # Pointing now works for EVERY provider:
@@ -796,7 +823,7 @@ class CompanionManager(QObject):
                 detected_coord=detected_coord,
                 code_active=code_active,
                 language_code=lang_code,
-                extra=ocr_extra + doc_extra,
+                extra=ocr_extra + doc_extra + fig_extra,
             )
             if sensitive:
                 system += (
@@ -897,7 +924,7 @@ class CompanionManager(QObject):
                     pass
             self._emit_state(AppState.SPEAKING)
             try:
-                await self._get_tts().speak(clean)
+                await self._play_lesson(full_response, clean)
             except asyncio.CancelledError:
                 pass
 
@@ -1022,91 +1049,210 @@ class CompanionManager(QObject):
             return None
 
     def _parse_points(self, text: str):
+        """Live-during-stream tags: pointing and board-clear only. Drawing
+        tags are deferred and played back in sync with narration."""
         for match in POINT_RE.finditer(text):
             x, y, label, scr = match.groups()
             lx, ly = self._denorm(float(x), float(y), int(scr))
             self.sig_point_at.emit(lx, ly, label.strip())
-
         if CLEAR_RE.search(text):
             self.sig_clear_drawings.emit()
 
-        # Anchor forms FIRST — their patterns overlap the coordinate forms
-        for match in CIRCLE_AT_RE.finditer(text):
-            name, color = match.groups()
-            bbox = self._resolve_anchor(name.strip())
-            if bbox:
-                l, t, r, b = bbox
-                cx, cy = (l + r) / 2, (t + b) / 2
-                rad = max(r - l, b - t) / 2 + 10
-                self.sig_draw.emit({"kind": "circle", "x": cx, "y": cy,
-                                    "r": rad, "label": "", "color": color or "blue"})
-        for match in UNDERLINE_AT_RE.finditer(text):
-            name, color = match.groups()
-            bbox = self._resolve_anchor(name.strip())
-            if bbox:
-                l, t, r, b = bbox
-                self.sig_draw.emit({"kind": "underline", "x": l, "y": b + 3,
-                                    "w": r - l, "color": color or "blue"})
+    # ── Vertex snapping (figure-detector assisted accuracy) ─────────────────
 
-        for match in LINE_RE.finditer(text):
-            x1, y1, x2, y2, color = match.groups()
-            p1 = self._denorm(float(x1), float(y1))
-            p2 = self._denorm(float(x2), float(y2))
-            self.sig_draw.emit({"kind": "line", "pts": [p1, p2],
-                                "color": color or "blue"})
-        for match in ARROW_RE.finditer(text):
-            x1, y1, x2, y2, color = match.groups()
-            p1 = self._denorm(float(x1), float(y1))
-            p2 = self._denorm(float(x2), float(y2))
-            self.sig_draw.emit({"kind": "arrow", "pts": [p1, p2],
-                                "color": color or "blue"})
-        for match in CIRCLE_RE.finditer(text):
-            x, y, r, label, color = match.groups()
+    def _snap_pt(self, nx: float, ny: float, thresh: float = 35.0):
+        """Snap a normalized point to the nearest detected-figure vertex."""
+        best, bd = None, thresh
+        for fig in self._figures_ctx:
+            for (vx, vy) in fig.vertices:
+                d = math.hypot(nx - vx, ny - vy)
+                if d < bd:
+                    bd, best = d, (float(vx), float(vy))
+        return best if best is not None else (nx, ny)
+
+    def _angle_rot_for_vertex(self, nx: float, ny: float):
+        """Rotation (deg) that puts a right-angle marker INSIDE the detected
+        polygon at vertex (nx,ny), aligned with its two edges. None if the
+        point is not a detected vertex."""
+        for fig in self._figures_ctx:
+            verts = fig.vertices
+            if len(verts) < 3:
+                continue
+            for i, (vx, vy) in enumerate(verts):
+                if math.hypot(nx - vx, ny - vy) > 6:
+                    continue
+                P = self._denorm(vx, vy)
+                A = self._denorm(*verts[i - 1])
+                B = self._denorm(*verts[(i + 1) % len(verts)])
+                a1 = math.degrees(math.atan2(A[1] - P[1], A[0] - P[0]))
+                a2 = math.degrees(math.atan2(B[1] - P[1], B[0] - P[0]))
+                rot = a1
+                # Marker spans [rot, rot+90]; flip if the second edge sits on
+                # the other side so the square lies between the two edges.
+                if (a2 - rot) % 360 > 180:
+                    rot -= 90
+                return rot
+        return None
+
+    # ── Drawing-tag extraction (deferred, order-preserving) ──────────────────
+
+    def _shape_from_tag(self, tag: str):
+        m = CIRCLE_AT_RE.fullmatch(tag)
+        if m:
+            name, color = m.groups()
+            bbox = self._resolve_anchor(name.strip())
+            if not bbox:
+                return None
+            l, t, r, b = bbox
+            return {"kind": "circle", "x": (l + r) / 2, "y": (t + b) / 2,
+                    "r": max(r - l, b - t) / 2 + 10, "label": "",
+                    "color": color or "blue"}
+        m = UNDERLINE_AT_RE.fullmatch(tag)
+        if m:
+            name, color = m.groups()
+            bbox = self._resolve_anchor(name.strip())
+            if not bbox:
+                return None
+            l, t, r, b = bbox
+            return {"kind": "underline", "x": l, "y": b + 3, "w": r - l,
+                    "color": color or "blue"}
+        m = LINE_RE.fullmatch(tag) or ARROW_RE.fullmatch(tag)
+        if m:
+            kind = "line" if tag.startswith("[LINE") else "arrow"
+            x1, y1, x2, y2, color = m.groups()
+            n1 = self._snap_pt(float(x1), float(y1))
+            n2 = self._snap_pt(float(x2), float(y2))
+            return {"kind": kind, "pts": [self._denorm(*n1), self._denorm(*n2)],
+                    "color": color or "blue"}
+        m = CIRCLE_RE.fullmatch(tag)
+        if m:
+            x, y, r, label, color = m.groups()
             cx, cy = self._denorm(float(x), float(y))
-            self.sig_draw.emit({"kind": "circle", "x": cx, "y": cy,
-                                "r": max(12.0, self._denorm_len(float(r))),
-                                "label": (label or "").strip(),
-                                "color": color or "blue"})
-        for match in RECT_RE.finditer(text):
-            x1, y1, x2, y2, color = match.groups()
-            p1 = self._denorm(float(x1), float(y1))
-            p2 = self._denorm(float(x2), float(y2))
-            self.sig_draw.emit({"kind": "rect", "x1": p1[0], "y1": p1[1],
-                                "x2": p2[0], "y2": p2[1],
-                                "color": color or "blue"})
-        for match in POLY_RE.finditer(text):
-            pts_str, color = match.groups()
-            pts = [self._denorm(float(a), float(b))
+            return {"kind": "circle", "x": cx, "y": cy,
+                    "r": max(12.0, self._denorm_len(float(r))),
+                    "label": (label or "").strip(), "color": color or "blue"}
+        m = RECT_RE.fullmatch(tag)
+        if m:
+            x1, y1, x2, y2, color = m.groups()
+            p1 = self._denorm(*self._snap_pt(float(x1), float(y1)))
+            p2 = self._denorm(*self._snap_pt(float(x2), float(y2)))
+            return {"kind": "rect", "x1": p1[0], "y1": p1[1],
+                    "x2": p2[0], "y2": p2[1], "color": color or "blue"}
+        m = POLY_RE.fullmatch(tag)
+        if m:
+            pts_str, color = m.groups()
+            pts = [self._denorm(*self._snap_pt(float(a), float(b)))
                    for a, b in re.findall(r'(\d+),(\d+)', pts_str)]
-            if len(pts) >= 3:
-                self.sig_draw.emit({"kind": "poly", "pts": pts,
-                                    "color": color or "blue"})
-        for match in TEXT_RE.finditer(text):
-            x, y, content, color, size = match.groups()
+            if len(pts) < 3:
+                return None
+            return {"kind": "poly", "pts": pts, "color": color or "blue"}
+        m = TEXT_RE.fullmatch(tag)
+        if m:
+            x, y, content, color, size = m.groups()
             lx, ly = self._denorm(float(x), float(y))
-            self.sig_draw.emit({"kind": "text", "x": lx, "y": ly,
-                                "text": content.strip(),
-                                "color": color or "blue",
-                                "size": size or "m"})
-        for match in ANGLE_RE.finditer(text):
-            x, y, s, rot, color = match.groups()
+            return {"kind": "text", "x": lx, "y": ly, "text": content.strip(),
+                    "color": color or "blue", "size": size or "m"}
+        m = ANGLE_RE.fullmatch(tag)
+        if m:
+            x, y, s, rot, color = m.groups()
+            nx, ny = self._snap_pt(float(x), float(y))
+            auto_rot = self._angle_rot_for_vertex(nx, ny)
+            lx, ly = self._denorm(nx, ny)
+            return {"kind": "angle", "x": lx, "y": ly,
+                    "s": max(10.0, self._denorm_len(float(s))),
+                    "rot": auto_rot if auto_rot is not None else float(rot or 0),
+                    "color": color or "blue"}
+        m = UNDERLINE_RE.fullmatch(tag)
+        if m:
+            x, y, w, color = m.groups()
             lx, ly = self._denorm(float(x), float(y))
-            self.sig_draw.emit({"kind": "angle", "x": lx, "y": ly,
-                                "s": max(10.0, self._denorm_len(float(s))),
-                                "rot": float(rot or 0),
-                                "color": color or "blue"})
-        for match in UNDERLINE_RE.finditer(text):
-            x, y, w, color = match.groups()
+            return {"kind": "underline", "x": lx, "y": ly,
+                    "w": max(8.0, self._denorm_len(float(w))),
+                    "color": color or "blue"}
+        m = LABEL_RE.fullmatch(tag)
+        if m:
+            x, y, txt, color = m.groups()
             lx, ly = self._denorm(float(x), float(y))
-            self.sig_draw.emit({"kind": "underline", "x": lx, "y": ly,
-                                "w": max(8.0, self._denorm_len(float(w))),
-                                "color": color or "blue"})
-        for match in LABEL_RE.finditer(text):
-            x, y, txt, color = match.groups()
-            lx, ly = self._denorm(float(x), float(y))
-            self.sig_draw.emit({"kind": "text", "x": lx, "y": ly,
-                                "text": txt.strip(), "color": color or "blue",
-                                "size": "s"})
+            return {"kind": "text", "x": lx, "y": ly, "text": txt.strip(),
+                    "color": color or "blue", "size": "s"}
+        return None
+
+    def _extract_shapes(self, text: str) -> list:
+        """All drawing shapes in a piece of text, in document order."""
+        shapes = []
+        for m in ANY_TAG_RE.finditer(text):
+            try:
+                sh = self._shape_from_tag(m.group(0))
+            except Exception:
+                sh = None
+            if sh:
+                shapes.append(sh)
+        return shapes
+
+    # ── Teacher-style narrated playback ──────────────────────────────────────
+
+    def _segment_lesson(self, full_response: str) -> list:
+        """Split a response into (sentence, [shapes]) pairs, preserving which
+        sentence each drawing tag belongs to."""
+        tags: list[str] = []
+
+        def _stash(m):
+            tags.append(m.group(0))
+            return f"\x00{len(tags) - 1}\x00"
+
+        masked = ANY_TAG_RE.sub(_stash, full_response)
+        parts = re.split(r'(?<=[.!?])\s+', masked)
+        out = []
+        for part in parts:
+            ids = [int(i) for i in re.findall(r'\x00(\d+)\x00', part)]
+            shapes = self._extract_shapes("".join(tags[i] for i in ids))
+            clean = re.sub(r'\s+', ' ', re.sub(r'\x00\d+\x00', ' ', part)).strip()
+            if clean or shapes:
+                out.append((clean, shapes))
+        return out
+
+    async def _play_lesson(self, full_response: str, clean: str):
+        """Narrate sentence by sentence, drawing each sentence's shapes as it
+        is spoken — the cadence of a teacher at a whiteboard. Falls back to
+        plain TTS when the response contains no drawings."""
+        segments = self._segment_lesson(full_response)
+        if not any(shapes for _, shapes in segments):
+            await self._get_tts().speak(clean)
+            return
+
+        try:
+            from ui.overlay import (
+                _shape_length, STROKE_SPEED_PX_S,
+                SHAPE_DRAW_MIN_S, SHAPE_DRAW_MAX_S, SHAPE_GAP_SECONDS,
+            )
+        except Exception:
+            _shape_length = None
+
+        draw_end = time.monotonic()
+        for text, shapes in segments:
+            if self._cancel_flag:
+                break
+            draw_end = max(draw_end, time.monotonic())
+            for sh in shapes:
+                self.sig_draw.emit(sh)
+                if _shape_length is not None:
+                    dur = _shape_length(sh) / STROKE_SPEED_PX_S
+                    dur = max(SHAPE_DRAW_MIN_S, min(SHAPE_DRAW_MAX_S, dur))
+                    draw_end += dur + SHAPE_GAP_SECONDS
+                else:
+                    draw_end += 1.0
+            if text:
+                try:
+                    await self._get_tts().speak(text)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+            # A real teacher finishes the stroke before the next sentence —
+            # wait out any drawing time the narration didn't cover.
+            remaining = draw_end - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(min(remaining, 4.0) + 0.1)
 
     def _emit_state(self, state: AppState):
         self._state = state
