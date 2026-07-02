@@ -42,6 +42,26 @@ TRI_ROTATION_DEG = -35.0
 # #3380FF
 CURSOR_BLUE = QColor(0x33, 0x80, 0xFF)
 
+# Teaching-annotation palette. The LLM picks colors by name; default is the
+# Clicky blue. Chosen for contrast on both light and dark content.
+ANNOT_COLORS = {
+    "blue":   QColor(0x33, 0x80, 0xFF),
+    "red":    QColor(0xFF, 0x45, 0x55),
+    "green":  QColor(0x2E, 0xCC, 0x71),
+    "yellow": QColor(0xFF, 0xD5, 0x4F),
+    "orange": QColor(0xFF, 0x8C, 0x2E),
+    "purple": QColor(0xB5, 0x6C, 0xFF),
+    "white":  QColor(0xF5, 0xF7, 0xFA),
+    "cyan":   QColor(0x4F, 0xD9, 0xFF),
+}
+
+# Progressive stroke animation — each shape draws itself over this many
+# seconds, queued one after another like a teacher's hand at a whiteboard.
+SHAPE_DRAW_SECONDS = 0.45
+SHAPE_GAP_SECONDS  = 0.12
+
+_TEXT_SIZES = {"s": 12, "m": 17, "l": 26}
+
 # Pointing phrases from the original
 POINTER_PHRASES = (
     "right here!", "this one!", "over here!",
@@ -100,10 +120,12 @@ class CursorOverlay(QWidget):
         self._ring: Optional[tuple] = None
         self._ring_phase: float = 0.0
 
-        # Whiteboard annotations — list of dicts the overlay paints each tick.
-        # Each item: {"kind": "arrow"|"circle"|"text"|"underline", "args": (...),
-        #             "born": time, "ttl": seconds}
+        # Teaching annotations — list of shape dicts the overlay paints each
+        # tick. Shapes animate in sequentially (progressive strokes) and
+        # persist until clear_annotations() — a lesson stays on screen while
+        # the student studies it.
         self._annotations: list[dict] = []
+        self._draw_queue_end: float = 0.0   # when the last queued stroke finishes
 
         # Thinking spinner phase
         self._spin_phase: float = 0.0
@@ -176,46 +198,55 @@ class CursorOverlay(QWidget):
             self._dwell_until = float("inf")
 
     def release_point(self):
-        """Manager signals that TTS is done — fly buddy back to cursor now."""
+        """Manager signals that TTS is done — fly buddy back to cursor now.
+        Teaching drawings are NOT cleared here — they persist so the student
+        can keep studying them; the manager clears them on the next query."""
         self._hold_dwell = False
         if self._flight_phase == _PHASE_DWELLING:
             self._dwell_until = 0.0   # expires this tick → triggers return
         # Fade ring on next paint
         self._ring = None
-        # Drop any whiteboard annotations from this lesson too
-        self._annotations = []
 
-    # ── Whiteboard annotations ───────────────────────────────────────────────
+    # ── Teaching annotations ─────────────────────────────────────────────────
 
-    def add_arrow(self, x1: float, y1: float, x2: float, y2: float,
-                  ttl: float = 8.0):
-        """Draw an arrow from (x1,y1) to (x2,y2). Logical screen coords."""
-        self._annotations.append({
-            "kind": "arrow", "args": (x1, y1, x2, y2),
-            "born": time.monotonic(), "ttl": ttl,
-        })
+    def add_shape(self, shape: dict):
+        """Queue a shape for progressive drawing. Logical screen coords.
 
-    def add_circle(self, x: float, y: float, radius: float = 30.0,
-                   ttl: float = 8.0):
-        self._annotations.append({
-            "kind": "circle", "args": (x, y, radius),
-            "born": time.monotonic(), "ttl": ttl,
-        })
+        shape: {"kind": "line"|"arrow"|"circle"|"rect"|"poly"|"text"|
+                        "underline"|"angle",
+                ...kind-specific fields...,
+                "color": palette name (optional),
+                "ttl": seconds or None (None = persist until cleared)}
 
-    def add_underline(self, x: float, y: float, width: float, ttl: float = 8.0):
-        self._annotations.append({
-            "kind": "underline", "args": (x, y, width),
-            "born": time.monotonic(), "ttl": ttl,
-        })
+        Shapes animate in arrival order: each waits for the previous stroke
+        to finish, like a hand drawing on a board.
+        """
+        now = time.monotonic()
+        start = max(now, self._draw_queue_end)
+        self._draw_queue_end = start + SHAPE_DRAW_SECONDS + SHAPE_GAP_SECONDS
+        shape = dict(shape)
+        shape["start"] = start
+        shape.setdefault("color", "blue")
+        shape.setdefault("ttl", None)
+        self._annotations.append(shape)
 
-    def add_text(self, x: float, y: float, text: str, ttl: float = 8.0):
-        self._annotations.append({
-            "kind": "text", "args": (x, y, text),
-            "born": time.monotonic(), "ttl": ttl,
-        })
+    # Legacy single-shape helpers (kept for compatibility with old signals)
+    def add_arrow(self, x1, y1, x2, y2, ttl=None):
+        self.add_shape({"kind": "arrow", "pts": [(x1, y1), (x2, y2)], "ttl": ttl})
+
+    def add_circle(self, x, y, radius=30.0, ttl=None):
+        self.add_shape({"kind": "circle", "x": x, "y": y, "r": radius, "ttl": ttl})
+
+    def add_underline(self, x, y, width, ttl=None):
+        self.add_shape({"kind": "underline", "x": x, "y": y, "w": width, "ttl": ttl})
+
+    def add_text(self, x, y, text, ttl=None):
+        self.add_shape({"kind": "text", "x": x, "y": y, "text": text,
+                        "size": "s", "ttl": ttl})
 
     def clear_annotations(self):
         self._annotations = []
+        self._draw_queue_end = 0.0
 
     def _begin_flight(self, start: QPointF, end: QPointF, phase: str):
         dx, dy = end.x() - start.x(), end.y() - start.y()
@@ -376,65 +407,170 @@ class CursorOverlay(QWidget):
         p.end()
 
     def _draw_annotations(self, p):
-        """Render arrows / circles / underlines / text labels with TTL fade."""
+        """Render teaching shapes with progressive draw-in animation.
+
+        Each shape animates from 0→100% over SHAPE_DRAW_SECONDS starting at
+        its queued "start" time. Shapes with ttl=None persist at full alpha;
+        shapes with a ttl fade out over their last 25%.
+        """
         now = time.monotonic()
         keep = []
         for ann in self._annotations:
-            age = now - ann["born"]
-            if age > ann["ttl"]:
+            u = (now - ann["start"]) / SHAPE_DRAW_SECONDS
+            if u <= 0:
+                keep.append(ann)     # queued, not started yet
                 continue
-            keep.append(ann)
-            # Fade alpha in last 25% of TTL
+            u = min(1.0, u)
+
             alpha = 1.0
-            if age > ann["ttl"] * 0.75:
-                alpha = max(0.0, 1.0 - (age - ann["ttl"] * 0.75) / (ann["ttl"] * 0.25))
-            col = QColor(CURSOR_BLUE)
-            col.setAlpha(int(220 * alpha))
+            ttl = ann.get("ttl")
+            if ttl is not None:
+                age = now - ann["start"]
+                if age > ttl:
+                    continue         # expired — drop
+                if age > ttl * 0.75:
+                    alpha = max(0.0, 1.0 - (age - ttl * 0.75) / (ttl * 0.25))
+            keep.append(ann)
+
+            col = QColor(ANNOT_COLORS.get(ann.get("color", "blue"), CURSOR_BLUE))
+            col.setAlpha(int(235 * alpha))
             kind = ann["kind"]
-            if kind == "arrow":
-                self._paint_arrow(p, *ann["args"], col)
-            elif kind == "circle":
-                self._paint_annotation_circle(p, *ann["args"], col)
-            elif kind == "underline":
-                self._paint_underline(p, *ann["args"], col)
-            elif kind == "text":
-                self._paint_text(p, *ann["args"], col)
+            try:
+                if kind in ("line", "arrow"):
+                    self._paint_stroke_path(p, ann["pts"], False, u, col,
+                                            arrow=(kind == "arrow"))
+                elif kind == "poly":
+                    self._paint_stroke_path(p, ann["pts"], True, u, col)
+                elif kind == "rect":
+                    x1, y1, x2, y2 = ann["x1"], ann["y1"], ann["x2"], ann["y2"]
+                    pts = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                    self._paint_stroke_path(p, pts, True, u, col)
+                elif kind == "circle":
+                    self._paint_circle(p, ann, u, col, alpha)
+                elif kind == "underline":
+                    pts = [(ann["x"], ann["y"]), (ann["x"] + ann["w"], ann["y"])]
+                    self._paint_stroke_path(p, pts, False, u, col)
+                elif kind == "angle":
+                    self._paint_angle(p, ann, u, col)
+                elif kind == "text":
+                    self._paint_text(p, ann, u, col, alpha)
+            except Exception:
+                continue   # a malformed shape must never break the paint loop
         self._annotations = keep
 
-    def _paint_arrow(self, p, x1, y1, x2, y2, col):
-        x1 -= self.x(); y1 -= self.y(); x2 -= self.x(); y2 -= self.y()
-        pen = QPen(col, 3)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
+    def _pens(self, col, width=4.0):
+        """(under, main) pen pair — dark under-stroke keeps lines readable
+        over light content, like a marker outline."""
+        under_col = QColor(0, 0, 0)
+        under_col.setAlpha(min(110, col.alpha()))
+        under = QPen(under_col, width + 2.5)
+        under.setCapStyle(Qt.PenCapStyle.RoundCap)
+        under.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        main = QPen(col, width)
+        main.setCapStyle(Qt.PenCapStyle.RoundCap)
+        main.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        return under, main
+
+    def _paint_stroke_path(self, p, pts, closed, u, col, arrow=False, width=4.0):
+        """Draw the first u-fraction of a polyline (progressive stroke)."""
+        pts = [(x - self.x(), y - self.y()) for (x, y) in pts]
+        if closed and len(pts) >= 3:
+            pts = pts + [pts[0]]
+        if len(pts) < 2:
+            return
+        seg_lens = []
+        total = 0.0
+        for a, b in zip(pts, pts[1:]):
+            L = math.hypot(b[0] - a[0], b[1] - a[1])
+            seg_lens.append(L)
+            total += L
+        if total <= 0:
+            return
+        budget = total * u
+        drawn = [pts[0]]
+        for (a, b), L in zip(zip(pts, pts[1:]), seg_lens):
+            if budget <= 0:
+                break
+            if L <= budget:
+                drawn.append(b)
+                budget -= L
+            else:
+                t = budget / L
+                drawn.append((a[0] + (b[0] - a[0]) * t,
+                              a[1] + (b[1] - a[1]) * t))
+                budget = 0
+        path = QPainterPath(QPointF(*drawn[0]))
+        for pt in drawn[1:]:
+            path.lineTo(QPointF(*pt))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-        # Arrowhead
-        ang = math.atan2(y2 - y1, x2 - x1)
-        head_len = 14
-        for sign in (-1, 1):
-            ax = x2 - head_len * math.cos(ang + sign * math.radians(28))
-            ay = y2 - head_len * math.sin(ang + sign * math.radians(28))
-            p.drawLine(QPointF(x2, y2), QPointF(ax, ay))
+        for pen in self._pens(col, width):
+            p.setPen(pen)
+            p.drawPath(path)
+        # Arrowhead appears once the line is fully drawn
+        if arrow and u >= 1.0 and len(pts) >= 2:
+            (x1, y1), (x2, y2) = pts[-2], pts[-1]
+            ang = math.atan2(y2 - y1, x2 - x1)
+            head = 15
+            for pen in self._pens(col, width):
+                p.setPen(pen)
+                for sign in (-1, 1):
+                    ax = x2 - head * math.cos(ang + sign * math.radians(28))
+                    ay = y2 - head * math.sin(ang + sign * math.radians(28))
+                    p.drawLine(QPointF(x2, y2), QPointF(ax, ay))
 
-    def _paint_annotation_circle(self, p, x, y, r, col):
-        x -= self.x(); y -= self.y()
-        pen = QPen(col, 3)
-        p.setPen(pen)
+    def _paint_circle(self, p, ann, u, col, alpha):
+        x = ann["x"] - self.x()
+        y = ann["y"] - self.y()
+        r = ann["r"]
+        rect = QRectF(x - r, y - r, 2 * r, 2 * r)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(QPointF(x, y), r, r)
+        # Sweep the arc clockwise from 12 o'clock as it draws in
+        span = int(-360 * 16 * u)
+        for pen in self._pens(col, 3.5):
+            p.setPen(pen)
+            p.drawArc(rect, 90 * 16, span)
+        label = ann.get("label", "")
+        if label and u >= 1.0:
+            f = QFont("Segoe UI", 11, QFont.Weight.Bold)
+            p.setFont(f)
+            fm = p.fontMetrics()
+            tx = x - fm.horizontalAdvance(label) / 2
+            ty = y - r - 8
+            self._outlined_text(p, tx, ty, label, col, alpha)
 
-    def _paint_underline(self, p, x, y, w, col):
-        x -= self.x(); y -= self.y()
-        pen = QPen(col, 4)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        p.drawLine(QPointF(x, y), QPointF(x + w, y))
+    def _paint_angle(self, p, ann, u, col):
+        """Right-angle marker: a small square corner at (x,y), rotated rot°."""
+        x, y = ann["x"], ann["y"]
+        s = ann.get("s", 22)
+        rot = math.radians(ann.get("rot", 0))
+        d1 = (math.cos(rot), math.sin(rot))
+        d2 = (math.cos(rot + math.pi / 2), math.sin(rot + math.pi / 2))
+        p1 = (x + d1[0] * s, y + d1[1] * s)
+        p2 = (x + (d1[0] + d2[0]) * s, y + (d1[1] + d2[1]) * s)
+        p3 = (x + d2[0] * s, y + d2[1] * s)
+        self._paint_stroke_path(p, [p1, p2, p3], False, u, col, width=3.0)
 
-    def _paint_text(self, p, x, y, text, col):
-        x -= self.x(); y -= self.y()
-        font = QFont("Segoe UI", 11, QFont.Weight.Bold)
+    def _paint_text(self, p, ann, u, col, alpha):
+        x = ann["x"] - self.x()
+        y = ann["y"] - self.y()
+        pt_size = _TEXT_SIZES.get(ann.get("size", "m"), 17)
+        font = QFont("Segoe UI", pt_size, QFont.Weight.Bold)
         p.setFont(font)
-        p.setPen(QPen(col, 1))
+        # Ease in: fade + slight rise
+        fade = u * alpha
+        y += (1.0 - u) * 6
+        self._outlined_text(p, x, y, ann["text"], col, fade)
+
+    def _outlined_text(self, p, x, y, text, col, alpha):
+        """Text with a dark outline so it reads on any background."""
+        shadow = QColor(0, 0, 0)
+        shadow.setAlpha(int(170 * alpha))
+        p.setPen(QPen(shadow, 1))
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)):
+            p.drawText(QPointF(x + dx, y + dy), text)
+        c = QColor(col)
+        c.setAlpha(int(255 * alpha))
+        p.setPen(QPen(c, 1))
         p.drawText(QPointF(x, y), text)
 
     def _draw_ring(self, p):

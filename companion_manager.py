@@ -98,7 +98,8 @@ def _build_system_prompt(
         x, y, label = detected_coord
         ctx_lines.append(
             f"DETECTED ELEMENT (pre-computed by the pointing engine — use "
-            f"this coordinate verbatim): x={x}, y={y}, label='{label}'."
+            f"this coordinate verbatim in your [POINT] tag): x={x}, y={y}, "
+            f"label='{label}'. (Already normalized 0-1000.)"
         )
     if total_steps > 1:
         ctx_lines.append(
@@ -136,13 +137,18 @@ next to the user's cursor. Your job is to *show*, not just tell.
 
 {chr(10).join(ctx_lines)}
 
+COORDINATE SYSTEM (applies to every tag below): coordinates are NORMALIZED
+0-1000 relative to the screenshot. x=0 is the LEFT edge, x=1000 the RIGHT
+edge; y=0 is the TOP, y=1000 the BOTTOM. The exact centre of the screen is
+500,500. Sizes/radii use the same scale (100 = 10% of screen width).
+
 HARD RULES (never break):
   1. LOCATE QUESTIONS ("where is X", "how do I click Y", "show me X", "find X"):
      • If a DETECTED ELEMENT coordinate is provided above, emit EXACTLY ONE tag
        [POINT:x,y:label:screen1]  using those coordinates and a 1-3 word label.
        Follow with ONE sentence explaining what it is. Nothing else.
      • If no coordinate is provided AND you can see the element in the screenshot,
-       emit [POINT:x,y:label:screen1] at your best-guess pixel coordinates.
+       emit [POINT:x,y:label:screen1] at your best-guess normalized coordinates.
      • If the element is NOT visible, say plainly: "I don't see X on this page —
        you're looking at [describe actual page]. Want me to help you get there?"
        DO NOT invent generic directions like "click the search bar at the top".
@@ -171,13 +177,36 @@ HARD RULES (never break):
      If asked "who is MrBeast" — say "MrBeast (Jimmy Donaldson) is an American
      YouTuber known for…". Same for any other public person.
 
-  6. ANNOTATE for emphasis: when teaching where multiple things matter, you
-     MAY emit annotation tags (in addition to one POINT tag):
-       [ARROW:x1,y1->x2,y2]            line with arrowhead
-       [CIRCLE:x,y,r:label]            ring around an area
-       [UNDERLINE:x,y,width]           underline a word
-       [LABEL:x,y:short text]          floating caption
-     Use sparingly — at most 2 annotations per response.
+  6. DRAW ON SCREEN to teach. You can draw directly over the user's screen —
+     shapes float above their content, animate in the order you write them,
+     and stay visible until the next question. Tags (coords normalized 0-1000,
+     trailing :color always optional):
+       [LINE:x1,y1->x2,y2:color]         straight line
+       [ARROW:x1,y1->x2,y2:color]        line with arrowhead (points at x2,y2)
+       [CIRCLE:x,y,r:label:color]        ring; label optional
+       [RECT:x1,y1,x2,y2:color]          rectangle by opposite corners
+       [POLY:x1,y1 x2,y2 x3,y3:color]    closed shape, 3+ points (triangles!)
+       [TEXT:x,y:content:color:size]     text; size s|m|l (default m)
+       [ANGLE:x,y,s,rot:color]           right-angle marker at corner (x,y)
+       [CLEAR]                           wipe all drawings
+     Colors: blue red green yellow orange purple white cyan (default blue).
+     For real UI elements use anchors instead of guessing coordinates:
+       [CIRCLE:@Save button]  [UNDERLINE:@File menu]  — resolved pixel-perfectly.
+
+     TEACHING WITH DRAWINGS: when the user asks you to explain something
+     visible on screen (a figure, chart, diagram, equation, code), draw ON it
+     — trace its edges, label its parts, add helper lines — interleaving tags
+     with your spoken words in the order a teacher draws on a whiteboard.
+     Place TEXT next to what it names, never covering it. Use up to ~10 shapes
+     for a full lesson, 1-2 for a quick highlight.
+     Example — right triangle visible on screen, user asks about Pythagoras:
+       "See this corner? [ANGLE:320,620,25:yellow] That right angle is what
+        makes the theorem work. This vertical side [LINE:320,620->320,380:red]
+        is a [TEXT:290,500:a:red:l], the bottom [LINE:320,620->620,620:green]
+        is b [TEXT:470,655:b:green:l], and the long side
+        [LINE:320,380->620,620:cyan] is the hypotenuse c
+        [TEXT:490,470:c:cyan:l]. The rule: [TEXT:640,340:a² + b² = c²:white:l]"
+     (Adapt coordinates to where the figure ACTUALLY is in the screenshot.)
 
 STYLE: warm, concise, teacher-y. 1-2 sentences per step. No markdown bullets
 unless genuinely listing options.{_code_addendum(code_active)}{_lang_addendum(language_code)}{extra}"""
@@ -226,13 +255,30 @@ POINT_RE = re.compile(r'\[POINT:(\d+),(\d+):([^:\]]+):screen(\d+)\]')
 # until the next chunk so we never leak a half tag.
 POINT_PARTIAL_RE = re.compile(r'\[(?:P|PO|POI|POIN|POINT|POINT:[^\]]*)?$')
 
-# Whiteboard annotation tags — same idea as POINT, parsed and stripped.
-ARROW_RE     = re.compile(r'\[ARROW:(\d+),(\d+)->(\d+),(\d+)\]')
-CIRCLE_RE    = re.compile(r'\[CIRCLE:(\d+),(\d+),(\d+):([^\]]+)\]')
-UNDERLINE_RE = re.compile(r'\[UNDERLINE:(\d+),(\d+),(\d+)\]')
-LABEL_RE     = re.compile(r'\[LABEL:(\d+),(\d+):([^\]]+)\]')
+# ── Teaching / drawing tags ──────────────────────────────────────────────────
+# ALL coordinates are normalized 0-1000 relative to the screenshot the model
+# saw (x: 0=left edge, 1000=right edge; y: 0=top, 1000=bottom). The manager
+# converts to logical screen pixels via _denorm(). Trailing :color is optional
+# on every shape.
+_C = r'(?::([a-z]+))?'                       # optional trailing color group
+LINE_RE      = re.compile(r'\[LINE:(\d+),(\d+)->(\d+),(\d+)' + _C + r'\]')
+ARROW_RE     = re.compile(r'\[ARROW:(\d+),(\d+)->(\d+),(\d+)' + _C + r'\]')
+CIRCLE_RE    = re.compile(r'\[CIRCLE:(\d+),(\d+),(\d+)(?::([^:\]]*))?' + _C + r'\]')
+RECT_RE      = re.compile(r'\[RECT:(\d+),(\d+),(\d+),(\d+)' + _C + r'\]')
+POLY_RE      = re.compile(r'\[POLY:((?:\d+,\d+[ ]*)+)' + _C + r'\]')
+TEXT_RE      = re.compile(r'\[TEXT:(\d+),(\d+):([^:\]]+)' + _C + r'(?::(s|m|l))?\]')
+ANGLE_RE     = re.compile(r'\[ANGLE:(\d+),(\d+),(\d+)(?:,(-?\d+))?' + _C + r'\]')
+UNDERLINE_RE = re.compile(r'\[UNDERLINE:(\d+),(\d+),(\d+)' + _C + r'\]')
+LABEL_RE     = re.compile(r'\[LABEL:(\d+),(\d+):([^:\]]+)' + _C + r'\]')
+CLEAR_RE     = re.compile(r'\[CLEAR\]')
+# Anchor forms — element resolved by name via the hybrid pointer (UIA), so
+# the model never guesses coordinates for real UI: [CIRCLE:@Save button]
+CIRCLE_AT_RE    = re.compile(r'\[CIRCLE:@([^:\]]+?)' + _C + r'\]')
+UNDERLINE_AT_RE = re.compile(r'\[UNDERLINE:@([^:\]]+?)' + _C + r'\]')
+
 ANY_TAG_RE   = re.compile(
-    r'\[(?:POINT|ARROW|CIRCLE|UNDERLINE|LABEL):[^\]]*\]'
+    r'\[(?:POINT|ARROW|CIRCLE|UNDERLINE|LABEL|LINE|RECT|POLY|TEXT|ANGLE|CLEAR)'
+    r'(?::[^\]]*)?\]'
 )
 ANY_PARTIAL_RE = re.compile(r'\[[A-Z]{0,9}(?::[^\]]*)?$')
 
@@ -264,6 +310,8 @@ class CompanionManager(QObject):
     sig_circle              = pyqtSignal(float, float, float)
     sig_underline           = pyqtSignal(float, float, float)
     sig_label               = pyqtSignal(float, float, str)
+    sig_draw                = pyqtSignal(dict)            # generic teaching shape → overlay
+    sig_clear_drawings      = pyqtSignal()                # wipe all teaching shapes
     sig_recording_state     = pyqtSignal(bool, str)       # (is_recording, output_dir)
 
     def __init__(self):
@@ -285,6 +333,9 @@ class CompanionManager(QObject):
 
         # Per-app memory: { window_title: [Message, ...] }
         self._app_memory: dict[str, List[Message]] = {}
+        # Screenshots from the current turn — needed to map the LLM's
+        # normalized 0-1000 tag coordinates back to logical screen pixels.
+        self._screens_ctx: list = []
         # Current lesson: sequence of pending steps for multi-step tutorials
         self._lesson_steps: list[str] = []
         self._lesson_step_idx: int = 0
@@ -588,6 +639,10 @@ class CompanionManager(QObject):
             else:
                 screenshots = capture_all_screens()
                 images_b64 = [s.base64_jpeg for s in screenshots]
+            # Fresh question → wipe the previous lesson's drawings and remember
+            # this turn's screenshots for coordinate mapping.
+            self._screens_ctx = screenshots
+            self.sig_clear_drawings.emit()
 
             # 3. Parallel side-work: web search + element locator
             #
@@ -623,8 +678,16 @@ class CompanionManager(QObject):
                     target = None
 
                 if target is not None and target.source in ("uia", "ocr"):
-                    async def _ready(t=target):
-                        return (t.x, t.y)
+                    # UIA / OCR coordinates are PHYSICAL pixels; the overlay
+                    # draws in LOGICAL pixels — divide by the DPI scale.
+                    # (Also: return an object with .x/.y — downstream code
+                    # accesses attributes, a bare tuple would crash it.)
+                    from types import SimpleNamespace
+                    _scale = shot.dpi_scale or 1.0
+                    _pt = SimpleNamespace(x=target.x / _scale,
+                                          y=target.y / _scale)
+                    async def _ready(pt=_pt):
+                        return pt
                     locate_task = asyncio.create_task(_ready())
                 elif cfg.anthropic_api_key:
                     # Path A — Anthropic Computer Use (best accuracy)
@@ -681,7 +744,10 @@ class CompanionManager(QObject):
             if detected:
                 # Short label guess — first noun phrase after "the"/"where"
                 label = _guess_label(transcript)
-                detected_coord = (int(detected.x), int(detected.y), label)
+                # Prompt wants NORMALIZED 0-1000 coords (the model echoes them
+                # into [POINT:...] which _parse_points denormalizes back).
+                ndx, ndy = self._norm(detected.x, detected.y)
+                detected_coord = (ndx, ndy, label)
                 # Fire the overlay NOW so the buddy flies over while the LLM
                 # still thinks. Hold dwell until TTS completes.
                 self.sig_point_hold.emit(True)
@@ -887,22 +953,151 @@ class CompanionManager(QObject):
             pass
         self._emit_state(AppState.IDLE)
 
+    # ── Coordinate mapping ────────────────────────────────────────────────────
+    #
+    # The LLM emits NORMALIZED 0-1000 coordinates relative to the screenshot
+    # it saw. The overlay draws in LOGICAL screen pixels. These helpers convert
+    # between the two using the ScreenShot metadata captured this turn.
+
+    def _shot(self, screen_idx: int = 1):
+        for s in self._screens_ctx:
+            if s.index == screen_idx:
+                return s
+        return self._screens_ctx[0] if self._screens_ctx else None
+
+    def _denorm(self, nx: float, ny: float, screen_idx: int = 1):
+        """Normalized 0-1000 (screenshot space) → logical screen pixels."""
+        shot = self._shot(screen_idx)
+        if shot is None:
+            return float(nx), float(ny)
+        log_w = shot.physical_width / shot.dpi_scale
+        log_h = shot.physical_height / shot.dpi_scale
+        # Legacy safety: values beyond 1000 are raw pixels in the downscaled
+        # JPEG the model saw — scale by the JPEG dimensions instead.
+        bx = 1000.0 if (nx <= 1000 and ny <= 1000) else float(max(shot.width, 1))
+        by = 1000.0 if (nx <= 1000 and ny <= 1000) else float(max(shot.height, 1))
+        x = shot.logical_left + (nx / bx) * log_w
+        y = shot.logical_top + (ny / by) * log_h
+        return x, y
+
+    def _denorm_len(self, n: float, screen_idx: int = 1) -> float:
+        """Normalized length (0-1000 x-units) → logical pixels."""
+        shot = self._shot(screen_idx)
+        if shot is None:
+            return float(n)
+        return (n / 1000.0) * (shot.physical_width / shot.dpi_scale)
+
+    def _norm(self, x: float, y: float, screen_idx: int = 1):
+        """Logical screen pixels → normalized 0-1000 (for prompt injection)."""
+        shot = self._shot(screen_idx)
+        if shot is None:
+            return int(x), int(y)
+        log_w = shot.physical_width / shot.dpi_scale
+        log_h = shot.physical_height / shot.dpi_scale
+        nx = (x - shot.logical_left) / max(log_w, 1) * 1000
+        ny = (y - shot.logical_top) / max(log_h, 1) * 1000
+        return int(round(nx)), int(round(ny))
+
+    def _resolve_anchor(self, name: str):
+        """Resolve '@element name' → logical bbox via UIA (fast tier only)."""
+        try:
+            from ai.hybrid_pointer import find_target
+            t = find_target(name, skip_ocr=True, skip_vision=True)
+            if t is None:
+                return None
+            shot = self._shot(1)
+            scale = (shot.dpi_scale if shot else 1.0) or 1.0
+            l, tp, r, b = t.bbox
+            return (l / scale, tp / scale, r / scale, b / scale)
+        except Exception:
+            return None
+
     def _parse_points(self, text: str):
         for match in POINT_RE.finditer(text):
-            x, y, label, _ = match.groups()
-            self.sig_point_at.emit(float(x), float(y), label.strip())
+            x, y, label, scr = match.groups()
+            lx, ly = self._denorm(float(x), float(y), int(scr))
+            self.sig_point_at.emit(lx, ly, label.strip())
+
+        if CLEAR_RE.search(text):
+            self.sig_clear_drawings.emit()
+
+        # Anchor forms FIRST — their patterns overlap the coordinate forms
+        for match in CIRCLE_AT_RE.finditer(text):
+            name, color = match.groups()
+            bbox = self._resolve_anchor(name.strip())
+            if bbox:
+                l, t, r, b = bbox
+                cx, cy = (l + r) / 2, (t + b) / 2
+                rad = max(r - l, b - t) / 2 + 10
+                self.sig_draw.emit({"kind": "circle", "x": cx, "y": cy,
+                                    "r": rad, "label": "", "color": color or "blue"})
+        for match in UNDERLINE_AT_RE.finditer(text):
+            name, color = match.groups()
+            bbox = self._resolve_anchor(name.strip())
+            if bbox:
+                l, t, r, b = bbox
+                self.sig_draw.emit({"kind": "underline", "x": l, "y": b + 3,
+                                    "w": r - l, "color": color or "blue"})
+
+        for match in LINE_RE.finditer(text):
+            x1, y1, x2, y2, color = match.groups()
+            p1 = self._denorm(float(x1), float(y1))
+            p2 = self._denorm(float(x2), float(y2))
+            self.sig_draw.emit({"kind": "line", "pts": [p1, p2],
+                                "color": color or "blue"})
         for match in ARROW_RE.finditer(text):
-            x1, y1, x2, y2 = (float(v) for v in match.groups())
-            self.sig_arrow.emit(x1, y1, x2, y2)
+            x1, y1, x2, y2, color = match.groups()
+            p1 = self._denorm(float(x1), float(y1))
+            p2 = self._denorm(float(x2), float(y2))
+            self.sig_draw.emit({"kind": "arrow", "pts": [p1, p2],
+                                "color": color or "blue"})
         for match in CIRCLE_RE.finditer(text):
-            x, y, r, _label = match.groups()
-            self.sig_circle.emit(float(x), float(y), float(r))
+            x, y, r, label, color = match.groups()
+            cx, cy = self._denorm(float(x), float(y))
+            self.sig_draw.emit({"kind": "circle", "x": cx, "y": cy,
+                                "r": max(12.0, self._denorm_len(float(r))),
+                                "label": (label or "").strip(),
+                                "color": color or "blue"})
+        for match in RECT_RE.finditer(text):
+            x1, y1, x2, y2, color = match.groups()
+            p1 = self._denorm(float(x1), float(y1))
+            p2 = self._denorm(float(x2), float(y2))
+            self.sig_draw.emit({"kind": "rect", "x1": p1[0], "y1": p1[1],
+                                "x2": p2[0], "y2": p2[1],
+                                "color": color or "blue"})
+        for match in POLY_RE.finditer(text):
+            pts_str, color = match.groups()
+            pts = [self._denorm(float(a), float(b))
+                   for a, b in re.findall(r'(\d+),(\d+)', pts_str)]
+            if len(pts) >= 3:
+                self.sig_draw.emit({"kind": "poly", "pts": pts,
+                                    "color": color or "blue"})
+        for match in TEXT_RE.finditer(text):
+            x, y, content, color, size = match.groups()
+            lx, ly = self._denorm(float(x), float(y))
+            self.sig_draw.emit({"kind": "text", "x": lx, "y": ly,
+                                "text": content.strip(),
+                                "color": color or "blue",
+                                "size": size or "m"})
+        for match in ANGLE_RE.finditer(text):
+            x, y, s, rot, color = match.groups()
+            lx, ly = self._denorm(float(x), float(y))
+            self.sig_draw.emit({"kind": "angle", "x": lx, "y": ly,
+                                "s": max(10.0, self._denorm_len(float(s))),
+                                "rot": float(rot or 0),
+                                "color": color or "blue"})
         for match in UNDERLINE_RE.finditer(text):
-            x, y, w = (float(v) for v in match.groups())
-            self.sig_underline.emit(x, y, w)
+            x, y, w, color = match.groups()
+            lx, ly = self._denorm(float(x), float(y))
+            self.sig_draw.emit({"kind": "underline", "x": lx, "y": ly,
+                                "w": max(8.0, self._denorm_len(float(w))),
+                                "color": color or "blue"})
         for match in LABEL_RE.finditer(text):
-            x, y, txt = match.groups()
-            self.sig_label.emit(float(x), float(y), txt.strip())
+            x, y, txt, color = match.groups()
+            lx, ly = self._denorm(float(x), float(y))
+            self.sig_draw.emit({"kind": "text", "x": lx, "y": ly,
+                                "text": txt.strip(), "color": color or "blue",
+                                "size": "s"})
 
     def _emit_state(self, state: AppState):
         self._state = state

@@ -41,7 +41,9 @@ class Config:
     tavily_api_key: Optional[str] = field(default_factory=lambda: os.getenv("TAVILY_API_KEY") or None)
 
     # App
-    hotkey: str = field(default_factory=lambda: os.getenv("CLICKY_HOTKEY", "ctrl+alt+space"))
+    # Push-to-talk. Two-key modifier combo — no clash with app shortcuts and
+    # easier to hold than a 3-key chord. Override with CLICKY_HOTKEY in .env.
+    hotkey: str = field(default_factory=lambda: os.getenv("CLICKY_HOTKEY", "ctrl+win"))
 
     def llm_provider(self) -> str:
         """Returns the active LLM provider (runtime override > priority chain).

@@ -97,11 +97,14 @@ def main():
     manager.sig_point_hold.connect(overlay.set_point_hold)
     manager.sig_point_release.connect(overlay.release_point)
 
-    # Whiteboard annotations
+    # Whiteboard annotations (legacy per-shape signals)
     manager.sig_arrow.connect(overlay.add_arrow)
     manager.sig_circle.connect(overlay.add_circle)
     manager.sig_underline.connect(overlay.add_underline)
     manager.sig_label.connect(overlay.add_text)
+    # Teaching drawings — generic shape channel with progressive animation
+    manager.sig_draw.connect(overlay.add_shape)
+    manager.sig_clear_drawings.connect(overlay.clear_annotations)
 
     # Errors
     manager.sig_error.connect(

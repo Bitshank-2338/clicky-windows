@@ -1,9 +1,9 @@
-# Clicky for Windows — Setup Guide
+﻿# Clicky for Windows â€” Setup Guide
 
 ## Prerequisites
 
 - Python 3.11+
-- Ollama installed (https://ollama.com) — for student/free mode
+- Ollama installed (https://ollama.com) â€” for student/free mode
 - `llama3.2-vision` model pulled: `ollama pull llama3.2-vision`
 
 ## Install
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 ```bash
 copy .env.example .env
 # Edit .env and add any API keys you have
-# Everything is optional — Ollama is the free fallback
+# Everything is optional â€” Ollama is the free fallback
 ```
 
 ## Run
@@ -37,7 +37,7 @@ python main.py
 A floating panel appears in the bottom-right corner.
 The Clicky icon appears in your system tray.
 
-**Hold `Ctrl+Alt+Space`** to speak. Release to send.
+**Hold `Ctrl+Win`** to speak. Release to send.
 
 ## Provider Priority (auto-detected)
 
