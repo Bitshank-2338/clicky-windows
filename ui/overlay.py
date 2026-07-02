@@ -55,12 +55,100 @@ ANNOT_COLORS = {
     "cyan":   QColor(0x4F, 0xD9, 0xFF),
 }
 
-# Progressive stroke animation — each shape draws itself over this many
-# seconds, queued one after another like a teacher's hand at a whiteboard.
-SHAPE_DRAW_SECONDS = 0.45
-SHAPE_GAP_SECONDS  = 0.12
+# Progressive stroke animation — shapes draw at "hand speed" (px/sec), so a
+# long line takes visibly longer than a short tick mark. Queued sequentially;
+# the buddy cursor rides the pen tip while each stroke draws.
+STROKE_SPEED_PX_S   = 420.0
+SHAPE_DRAW_MIN_S    = 0.6
+SHAPE_DRAW_MAX_S    = 2.2
+SHAPE_GAP_SECONDS   = 0.28
 
 _TEXT_SIZES = {"s": 12, "m": 17, "l": 26}
+
+
+def _shape_path_pts(shape: dict):
+    """(pts, closed) polyline for stroke-able shapes; None for circle/text."""
+    kind = shape.get("kind")
+    if kind in ("line", "arrow"):
+        return list(shape["pts"]), False
+    if kind == "poly":
+        return list(shape["pts"]), True
+    if kind == "rect":
+        x1, y1, x2, y2 = shape["x1"], shape["y1"], shape["x2"], shape["y2"]
+        return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)], True
+    if kind == "underline":
+        return [(shape["x"], shape["y"]),
+                (shape["x"] + shape["w"], shape["y"])], False
+    if kind == "angle":
+        s = shape.get("s", 22)
+        rot = math.radians(shape.get("rot", 0))
+        x, y = shape["x"], shape["y"]
+        d1 = (math.cos(rot), math.sin(rot))
+        d2 = (math.cos(rot + math.pi / 2), math.sin(rot + math.pi / 2))
+        return [(x + d1[0] * s, y + d1[1] * s),
+                (x + (d1[0] + d2[0]) * s, y + (d1[1] + d2[1]) * s),
+                (x + d2[0] * s, y + d2[1] * s)], False
+    return None, False
+
+
+def _shape_length(shape: dict) -> float:
+    """Approximate stroke length in logical px — drives draw duration."""
+    kind = shape.get("kind")
+    if kind == "circle":
+        return 2 * math.pi * shape.get("r", 30)
+    if kind == "text":
+        return 90.0   # fixed short reveal
+    pts, closed = _shape_path_pts(shape)
+    if not pts or len(pts) < 2:
+        return 60.0
+    if closed:
+        pts = pts + [pts[0]]
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1])
+               for a, b in zip(pts, pts[1:]))
+
+
+def _partial_pts(pts, closed, u):
+    """First u-fraction of a polyline. Returns the drawn point list."""
+    if closed and len(pts) >= 3:
+        pts = list(pts) + [pts[0]]
+    if len(pts) < 2:
+        return list(pts)
+    seg_lens = [math.hypot(b[0] - a[0], b[1] - a[1])
+                for a, b in zip(pts, pts[1:])]
+    total = sum(seg_lens)
+    if total <= 0:
+        return [pts[0]]
+    budget = total * min(1.0, max(0.0, u))
+    drawn = [pts[0]]
+    for (a, b), L in zip(zip(pts, pts[1:]), seg_lens):
+        if budget <= 0:
+            break
+        if L <= budget:
+            drawn.append(b)
+            budget -= L
+        else:
+            t = budget / L
+            drawn.append((a[0] + (b[0] - a[0]) * t,
+                          a[1] + (b[1] - a[1]) * t))
+            budget = 0
+    return drawn
+
+
+def _stroke_tip(shape: dict, u: float):
+    """Current pen-tip position of a shape at progress u — where the buddy
+    hovers while 'drawing'. Returns (x, y) in logical screen coords."""
+    kind = shape.get("kind")
+    if kind == "circle":
+        a = math.radians(90 - 360 * u)   # clockwise from 12 o'clock
+        return (shape["x"] + shape["r"] * math.cos(a),
+                shape["y"] - shape["r"] * math.sin(a))
+    if kind == "text":
+        return (shape["x"], shape["y"])
+    pts, closed = _shape_path_pts(shape)
+    if not pts:
+        return None
+    drawn = _partial_pts(pts, closed, u)
+    return drawn[-1] if drawn else None
 
 # Pointing phrases from the original
 POINTER_PHRASES = (
@@ -223,11 +311,15 @@ class CursorOverlay(QWidget):
         """
         now = time.monotonic()
         start = max(now, self._draw_queue_end)
-        self._draw_queue_end = start + SHAPE_DRAW_SECONDS + SHAPE_GAP_SECONDS
         shape = dict(shape)
+        # Draw at hand speed — long strokes take visibly longer
+        dur = _shape_length(shape) / STROKE_SPEED_PX_S
+        dur = max(SHAPE_DRAW_MIN_S, min(SHAPE_DRAW_MAX_S, dur))
         shape["start"] = start
+        shape["dur"] = dur
         shape.setdefault("color", "blue")
         shape.setdefault("ttl", None)
+        self._draw_queue_end = start + dur + SHAPE_GAP_SECONDS
         self._annotations.append(shape)
 
     # Legacy single-shape helpers (kept for compatibility with old signals)
@@ -247,6 +339,20 @@ class CursorOverlay(QWidget):
     def clear_annotations(self):
         self._annotations = []
         self._draw_queue_end = 0.0
+
+    def _active_stroke_tip(self):
+        """Pen tip of the currently-animating shape, or None. The buddy
+        rides this point so Clicky visibly draws each stroke."""
+        now = time.monotonic()
+        active = None
+        for ann in self._annotations:
+            if ann["start"] <= now < ann["start"] + ann["dur"]:
+                if active is None or ann["start"] > active["start"]:
+                    active = ann
+        if active is None:
+            return None
+        u = (now - active["start"]) / active["dur"]
+        return _stroke_tip(active, u)
 
     def _begin_flight(self, start: QPointF, end: QPointF, phase: str):
         dx, dy = end.x() - start.x(), end.y() - start.y()
@@ -354,6 +460,20 @@ class CursorOverlay(QWidget):
             self.update()
             return
 
+        # ── Drawing mode: buddy rides the pen tip of the active stroke ──
+        tip = self._active_stroke_tip()
+        if tip is not None:
+            # Strong pull toward the pen tip — smooth but keeps up with it
+            tx, ty = tip[0] + 6, tip[1] + 6
+            self._display_pos = QPointF(
+                self._display_pos.x() + (tx - self._display_pos.x()) * 0.45,
+                self._display_pos.y() + (ty - self._display_pos.y()) * 0.45,
+            )
+            self._vel = QPointF(0, 0)
+            self._phase += 0.10
+            self.update()
+            return
+
         # ── Normal cursor-follow spring ──
         target = QPointF(real.x() + OFFSET_X, real.y() + OFFSET_Y)
         stiffness, damping = 0.28, 0.62
@@ -416,7 +536,7 @@ class CursorOverlay(QWidget):
         now = time.monotonic()
         keep = []
         for ann in self._annotations:
-            u = (now - ann["start"]) / SHAPE_DRAW_SECONDS
+            u = (now - ann["start"]) / ann.get("dur", 0.6)
             if u <= 0:
                 keep.append(ann)     # queued, not started yet
                 continue
@@ -474,31 +594,11 @@ class CursorOverlay(QWidget):
     def _paint_stroke_path(self, p, pts, closed, u, col, arrow=False, width=4.0):
         """Draw the first u-fraction of a polyline (progressive stroke)."""
         pts = [(x - self.x(), y - self.y()) for (x, y) in pts]
+        drawn = _partial_pts(pts, closed, u)
+        if len(drawn) < 2:
+            return
         if closed and len(pts) >= 3:
             pts = pts + [pts[0]]
-        if len(pts) < 2:
-            return
-        seg_lens = []
-        total = 0.0
-        for a, b in zip(pts, pts[1:]):
-            L = math.hypot(b[0] - a[0], b[1] - a[1])
-            seg_lens.append(L)
-            total += L
-        if total <= 0:
-            return
-        budget = total * u
-        drawn = [pts[0]]
-        for (a, b), L in zip(zip(pts, pts[1:]), seg_lens):
-            if budget <= 0:
-                break
-            if L <= budget:
-                drawn.append(b)
-                budget -= L
-            else:
-                t = budget / L
-                drawn.append((a[0] + (b[0] - a[0]) * t,
-                              a[1] + (b[1] - a[1]) * t))
-                budget = 0
         path = QPainterPath(QPointF(*drawn[0]))
         for pt in drawn[1:]:
             path.lineTo(QPointF(*pt))

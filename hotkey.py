@@ -31,6 +31,20 @@ def _is_down(token: str) -> bool:
     return False
 
 
+def _norm_token(name: str) -> str:
+    """Canonicalize a keyboard-event key name → modifier token."""
+    n = (name or "").lower()
+    if "ctrl" in n or n == "control":
+        return "ctrl"
+    if "alt" in n:
+        return "alt"
+    if "shift" in n:
+        return "shift"
+    if "windows" in n or n in ("win", "cmd", "meta"):
+        return "win"
+    return n
+
+
 class GlobalHotkeyMonitor:
     """
     Registers a system-wide push-to-talk hotkey (default: ctrl+win).
@@ -66,10 +80,17 @@ class GlobalHotkeyMonitor:
         self._has_win = any(p in ("win", "windows", "cmd") for p in self._parts)
         self._modifier_only = all(p in _MOD_ALIASES for p in self._parts)
         self._hook_handle = None
+        # Canonical set of tokens the combo needs, and our own live key-state.
+        # We track state from the raw event stream instead of is_pressed():
+        # inside a hook callback the lib's state table may not include the
+        # very key the event is about, and modifiers don't auto-repeat — so
+        # a missed first evaluation would never be retried.
+        self._need = {_norm_token(p) for p in self._parts}
+        self._down: set = set()
 
     def start(self):
         if self._modifier_only:
-            # No terminal key — watch the global key stream and poll state.
+            # No terminal key — watch the global key stream and track state.
             self._hook_handle = keyboard.hook(self._on_any_event)
         else:
             terminal = self._parts[-1]
@@ -78,19 +99,26 @@ class GlobalHotkeyMonitor:
 
     # ── Modifier-only mode ────────────────────────────────────────────────────
 
-    def _combo_down(self) -> bool:
-        return all(_is_down(p) for p in self._parts)
-
     def _on_any_event(self, event):
         try:
+            tok = _norm_token(getattr(event, "name", "") or "")
+            if event.event_type == "down":
+                self._down.add(tok)
+            else:
+                self._down.discard(tok)
+
             if not self._held:
-                if event.event_type == "down" and self._combo_down():
+                # Engage when every needed token is down (own tracking, with
+                # is_pressed as a safety net for events we may have missed).
+                if all(t in self._down or _is_down(t) for t in self._need):
                     self._held = True
                     if self._has_win:
                         self._suppress_start_menu()
                     self._on_press()
             else:
-                if not self._combo_down():
+                # Release when any needed token is genuinely up.
+                if any(t not in self._down and not _is_down(t)
+                       for t in self._need):
                     self._held = False
                     self._on_release()
         except Exception:
