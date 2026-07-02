@@ -46,16 +46,29 @@ def _ensure_ollama_running():
         except Exception:
             pass
 
-    # Not responding — launch it detached so it survives the Python process
+    # API down. If an ollama process already exists, don't spawn a second
+    # `ollama serve` — duplicate instances fight over the port and wedge the
+    # API entirely. Just wait for the existing one below.
+    already_running = False
     try:
-        subprocess.Popen(
-            ["ollama", "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-    except FileNotFoundError:
-        return  # ollama not installed, provider will fail gracefully
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq ollama.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        already_running = "ollama.exe" in out.lower()
+    except Exception:
+        pass
+
+    if not already_running:
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        except FileNotFoundError:
+            return  # ollama not installed, provider will fail gracefully
 
     # Wait up to 8 s for the server to come up
     for _ in range(16):
