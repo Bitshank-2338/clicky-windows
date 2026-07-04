@@ -495,6 +495,9 @@ class CompanionManager(QObject):
             elif provider == "copilot":
                 from ai.github_copilot_provider import GitHubCopilotProvider
                 self._llm = GitHubCopilotProvider()
+            elif provider == "lmstudio":
+                from ai.lmstudio_provider import LMStudioProvider
+                self._llm = LMStudioProvider()
             else:
                 _ensure_ollama_running()
                 from ai.ollama_provider import OllamaProvider

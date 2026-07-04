@@ -29,6 +29,11 @@ class Config:
     ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "llama3.2-vision"))
     ollama_text_model:   str = field(default_factory=lambda: os.getenv("OLLAMA_TEXT_MODEL", "") or "llama3.2:3b")
 
+    # LM Studio — local OpenAI-compatible server (Developer tab → Start Server).
+    # No key needed. Leave LMSTUDIO_MODEL empty to use whatever's loaded.
+    lmstudio_host: str = field(default_factory=lambda: os.getenv("LMSTUDIO_HOST", "http://localhost:1234/v1"))
+    lmstudio_model: str = field(default_factory=lambda: os.getenv("LMSTUDIO_MODEL", ""))
+
     # STT
     deepgram_api_key: Optional[str] = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY") or None)
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "base"))
@@ -82,7 +87,8 @@ class Config:
             pass
         if self.google_api_key:
             out.append("gemini")
-        out.append("ollama")   # always available if the daemon is running
+        out.append("ollama")     # always available if the daemon is running
+        out.append("lmstudio")   # always available if the local server is running
         return out
 
     def set_active_llm(self, name: str) -> None:
@@ -145,6 +151,8 @@ class Config:
             "ollama_model": self.ollama_model,
             "ollama_vision_model": self.get_ollama_model("vision"),
             "ollama_text_model":   self.get_ollama_model("text"),
+            "lmstudio_host": self.lmstudio_host,
+            "lmstudio_model": self.lmstudio_model or "(auto — whatever's loaded)",
         }
 
     # ── Ollama runtime model selection ───────────────────────────────────
