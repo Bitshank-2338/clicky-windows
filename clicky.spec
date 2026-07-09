@@ -31,6 +31,9 @@ hidden = [
     "ai.universal_locator",
     "ai.web_search",
     "ai.ollama_bootstrap",
+    "ai.lmstudio_provider",
+    "ai.hybrid_pointer",
+    "ai.figure_detector",
 
     # First-run setup wizard
     "ui.setup_wizard",
@@ -39,6 +42,7 @@ hidden = [
     "audio.stt.deepgram_stt",
     "audio.stt.openai_stt",
     "audio.stt.faster_whisper_stt",
+    "audio.stt.whisper_cpp_stt",
 
     # Lazy TTS providers
     "audio.tts.edge_tts_provider",
@@ -66,6 +70,20 @@ for pkg in (
     "httpx",
     "httpcore",
     "certifi",
+    # Pointing + drawing accuracy stack (v1.2.0)
+    "uiautomation",             # UIA tree walker (needs its bundled DLL)
+    "rapidocr_onnxruntime",     # offline OCR — ships ONNX models as data
+    "onnxruntime",
+    "cv2",                      # figure detection for teaching drawings
+    # Web search + misc runtime deps added since 1.1.x
+    "ddgs",
+    "imageio",
+    "imageio_ffmpeg",
+    "pypdf",
+    "docx",
+    "langdetect",
+    "pynput",
+    "pywhispercpp",
 ):
     try:
         d, b, h = collect_all(pkg)
