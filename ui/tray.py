@@ -1,4 +1,7 @@
-from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
+from PyQt6.QtWidgets import (
+    QSystemTrayIcon, QMenu, QDialog, QVBoxLayout, QTextEdit,
+    QPushButton, QLabel, QHBoxLayout,
+)
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QObject
 
@@ -53,6 +56,7 @@ class TrayManager(QObject):
     on_diagnostics        = pyqtSignal()
     on_set_mic_device     = pyqtSignal(int)     # sounddevice input device index
     on_set_response_language = pyqtSignal(str)  # "" = auto-detect, else ISO code
+    on_set_custom_instructions = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +77,11 @@ class TrayManager(QObject):
         self._search_enabled = True
         self._wake_enabled = True
         self._response_language = ""
+        try:
+            from config import cfg as _cfg
+            self._custom_instructions = _cfg.custom_instructions
+        except Exception:
+            self._custom_instructions = ""
         self._slow_enabled = False
         self._quiz_enabled = False
         self._privacy_enabled = True
@@ -151,6 +160,10 @@ class TrayManager(QObject):
         self._wake_action = wake_action
 
         self._build_language_submenu(menu)
+
+        scope_label = "Instructions for Clicky…"
+        scope_action = menu.addAction(scope_label)
+        scope_action.triggered.connect(self._prompt_custom_instructions)
 
         # ── Tutor toggles ──
         menu.addSeparator()
@@ -269,6 +282,64 @@ class TrayManager(QObject):
         self._tray.setContextMenu(menu)
         # Keep refs to prevent GC
         self._menu = menu
+
+    def _prompt_custom_instructions(self):
+        dlg = QDialog(None)
+        dlg.setWindowTitle("Instructions for Clicky")
+        dlg.setMinimumSize(480, 380)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #1e1e24; }
+            QLabel { color: #e8e8ec; font-size: 13px; }
+            QTextEdit {
+                background-color: #26262e; color: #f0f0f4;
+                border: 1px solid #3a3a44; border-radius: 8px;
+                padding: 10px; font-size: 13px;
+            }
+            QTextEdit:focus { border: 1px solid #7c5cff; }
+            QPushButton {
+                background-color: #3a3a44; color: #f0f0f4;
+                border: none; border-radius: 6px; padding: 8px 18px;
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #47475400; }
+            QPushButton#primary { background-color: #7c5cff; }
+            QPushButton#primary:hover { background-color: #8f72ff; }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("Instructions for Clicky")
+        title.setStyleSheet("font-size: 15px; font-weight: 600; color: #ffffff;")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Replaces Clicky's core behavior (name, rules, tone).\n"
+            "{{CONTEXT}} and {{TODAY}} are placeholders — best left in."
+        )
+        subtitle.setStyleSheet("color: #9a9aa4; font-size: 12px;")
+        layout.addWidget(subtitle)
+
+        editor = QTextEdit()
+        editor.setPlainText(self._custom_instructions)
+        editor.setPlaceholderText("e.g. \"Your name is Max, a laid-back coding buddy…\"")
+        layout.addWidget(editor, stretch=1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        ok_btn = QPushButton("Save")
+        ok_btn.setObjectName("primary")
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._custom_instructions = editor.toPlainText().strip()
+            self.on_set_custom_instructions.emit(self._custom_instructions)
 
     def _build_language_submenu(self, parent_menu: QMenu):
         """Lets the user pin Clicky's reply language instead of relying on
