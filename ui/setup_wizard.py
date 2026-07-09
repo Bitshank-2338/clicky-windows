@@ -224,8 +224,10 @@ class SetupWizard(QDialog):
 
         elif step == "done":
             self.title.setText("All set 🎉")
+            from config import cfg
+            _hk = "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
             self.subtitle.setText(
-                "Clicky is ready. Press Ctrl+Alt+Space anywhere on Windows, "
+                f"Clicky is ready. Hold {_hk} anywhere on Windows, "
                 "or just say \"Clicky\" to start a conversation."
             )
             self.action_btn.setText("Start using Clicky")

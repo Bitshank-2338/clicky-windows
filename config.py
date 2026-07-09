@@ -1,12 +1,21 @@
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
+# Where the user-editable .env lives. In the PyInstaller build, __file__ is
+# inside the bundle's _internal\ directory but users (and the installer) put
+# .env next to Clicky.exe at the install root — reading _HERE from __file__
+# there meant .env edits were silently ignored (GitHub issue #3).
+if getattr(sys, "frozen", False):
+    _HERE = Path(sys.executable).parent
+else:
+    _HERE = Path(__file__).parent
+
 # Load env files in priority order. .env.local overrides .env (Next.js convention,
 # which is how many users — including this one — keep their real keys).
-_HERE = Path(__file__).parent
 for _name in (".env", ".env.local"):
     _p = _HERE / _name
     if _p.exists():
@@ -93,6 +102,10 @@ class Config:
     # LLM
     anthropic_api_key: Optional[str] = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY") or None)
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY") or None)
+    # Point the OpenAI provider at any OpenAI-compatible server (DeepSeek,
+    # Alibaba DashScope/Qwen, SiliconFlow, OpenRouter...). Empty = real OpenAI.
+    openai_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", "").strip())
+    openai_default_model: str = field(default_factory=lambda: os.getenv("OPENAI_DEFAULT_MODEL", "").strip())
     google_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or None)
     ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     # Legacy single-model knob — still respected as a fallback for both slots

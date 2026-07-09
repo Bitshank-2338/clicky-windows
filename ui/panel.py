@@ -25,8 +25,17 @@ class AppState(Enum):
     SPEAKING  = auto()
 
 
+def _hotkey_label() -> str:
+    """Human-readable hotkey from config, e.g. 'ctrl+win' -> 'Ctrl+Win'."""
+    try:
+        from config import cfg
+        return "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
+    except Exception:
+        return "Ctrl+Win"
+
+
 STATE_LABELS = {
-    AppState.IDLE:      "Say 'Clicky' or Ctrl+Alt+Space",
+    AppState.IDLE:      f"Say 'Clicky' or {_hotkey_label()}",
     AppState.LISTENING: "Listening...",
     AppState.THINKING:  "Thinking...",
     AppState.SPEAKING:  "Speaking...",
@@ -245,7 +254,7 @@ class CompanionPanel(QWidget):
         root.addWidget(scroll, stretch=1)
 
         # Push-to-talk button
-        self._ptt_btn = QPushButton("Say 'Clicky' or hold Ctrl+Alt+Space")
+        self._ptt_btn = QPushButton(f"Say 'Clicky' or hold {_hotkey_label()}")
         self._ptt_btn.setObjectName("hotkey_btn")
         self._ptt_btn.setFont(FONT_LABEL)
         self._ptt_btn.setFixedHeight(44)

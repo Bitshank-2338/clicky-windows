@@ -12,7 +12,13 @@ MAX_TOKENS = 1024
 class OpenAIProvider(BaseLLMProvider):
 
     def __init__(self):
-        self._client = AsyncOpenAI(api_key=cfg.openai_api_key)
+        # OPENAI_BASE_URL turns this into a generic OpenAI-compatible client:
+        # DeepSeek (https://api.deepseek.com), Alibaba DashScope/Qwen,
+        # SiliconFlow, OpenRouter, etc. Set OPENAI_DEFAULT_MODEL to match.
+        kwargs = {"api_key": cfg.openai_api_key}
+        if cfg.openai_base_url:
+            kwargs["base_url"] = cfg.openai_base_url
+        self._client = AsyncOpenAI(**kwargs)
 
     async def stream_response(
         self,
@@ -22,7 +28,7 @@ class OpenAIProvider(BaseLLMProvider):
         system_prompt: str,
         model: str | None = None,
     ) -> AsyncIterator[str]:
-        model = model or DEFAULT_MODEL
+        model = model or cfg.openai_default_model or DEFAULT_MODEL
 
         messages = [{"role": "system", "content": system_prompt}]
 

@@ -110,6 +110,11 @@ async def _fetch_openai() -> list[dict]:
     # everything (embeddings, TTS, image-gen, audio, etc.) so we whitelist by
     # known prefixes. Vision flag is true for the gpt-4o family + o3-vision.
     chat_prefixes = ("gpt-4", "gpt-5", "o1", "o3", "o4", "chatgpt-")
+    # Models that match a chat prefix but are NOT chat-completion models —
+    # picking one of these makes Clicky silently stop responding (e.g.
+    # "chatgpt-image-latest" generates images, it can't hold a conversation).
+    non_chat_markers = ("image", "audio", "realtime", "tts", "transcribe",
+                        "embed", "moderation", "dall", "instruct", "codex")
     vision_prefixes = ("gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-5",
                        "o1-", "o3-", "o4-")
     seen = set()
@@ -118,6 +123,8 @@ async def _fetch_openai() -> list[dict]:
         if not mid or mid in seen:
             continue
         if not mid.startswith(chat_prefixes):
+            continue
+        if any(marker in mid for marker in non_chat_markers):
             continue
         # Skip dated snapshots — they're noise. Keep only the alias forms.
         if any(c.isdigit() and "-" in mid[mid.index(c):] for c in mid if False):

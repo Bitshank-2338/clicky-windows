@@ -7,6 +7,7 @@ Orchestrates:
 """
 
 import asyncio
+import logging
 import math
 import re
 import threading
@@ -33,6 +34,8 @@ from tutor_features import (
     multilang, workflow_capture, collab,
 )
 import skills as skills_pkg
+
+_log = logging.getLogger("clicky.manager")
 
 
 def _ensure_ollama_running():
@@ -177,6 +180,29 @@ def _split_steps(text: str) -> list[str]:
         if m:
             steps.append(m.group(1).strip())
     return steps
+
+
+def _speakable(text: str) -> str:
+    """Make LLM text safe for TTS: models emit LaTeX ("\\( a \\)",
+    "\\[ a^2 + b^2 = c^2 \\]") and markdown that edge-tts reads aloud
+    verbatim as gibberish. Convert to spoken math / plain words."""
+    t = text
+    t = re.sub(r'\\(?:left|right)\b', '', t)
+    t = re.sub(r'\\sqrt\s*\{([^{}]*)\}', r'the square root of \1', t)
+    t = re.sub(r'\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}', r'\1 over \2', t)
+    t = (t.replace('\\times', ' times ').replace('\\cdot', ' times ')
+          .replace('\\pi', ' pi ').replace('\\theta', ' theta ')
+          .replace('\\alpha', ' alpha ').replace('\\beta', ' beta '))
+    t = re.sub(r'\\[\[\(\]\)]', '', t)              # \( \) \[ \] delimiters
+    t = re.sub(r'\^\s*\{?2\}?', ' squared', t)
+    t = re.sub(r'\^\s*\{?3\}?', ' cubed', t)
+    t = re.sub(r'\^\s*\{?(\d+)\}?', r' to the power \1', t)
+    t = t.replace('²', ' squared').replace('³', ' cubed')
+    t = re.sub(r'\\[a-zA-Z]+', ' ', t)              # any leftover \commands
+    t = re.sub(r'[{}]', '', t)
+    t = re.sub(r'[*_#`]+', '', t)                   # markdown emphasis/headers
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
 
 
 POINT_RE = re.compile(r'\[POINT:(\d+),(\d+):([^:\]]+):screen(\d+)\]')
@@ -387,8 +413,24 @@ class CompanionManager(QObject):
             self._emit_state(AppState.IDLE)
 
     def _submit(self, coro):
-        if self._loop:
-            asyncio.run_coroutine_threadsafe(coro, self._loop)
+        if not self._loop:
+            return
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+        def _observe(f):
+            try:
+                f.result()
+            except Exception as e:
+                # A swallowed exception here used to leave the UI stuck on
+                # "Listening..." forever (GitHub issue #6). Surface it and
+                # always return to idle.
+                _log.exception("background task failed: %s", e)
+                try:
+                    self.sig_error.emit(str(e))
+                    self._emit_state(AppState.IDLE)
+                except Exception:
+                    pass
+        fut.add_done_callback(_observe)
 
     # ── Provider lazy init ────────────────────────────────────────────────────
 
@@ -479,7 +521,16 @@ class CompanionManager(QObject):
     # ── Capture flow ──────────────────────────────────────────────────────────
 
     def _begin_capture(self):
-        self._listener.start_recording()
+        try:
+            self._listener.start_recording()
+        except Exception as e:
+            _log.exception("mic start failed")
+            self.sig_error.emit(
+                f"Couldn't open the microphone: {e}\n"
+                "Check Tray → Setup & Diagnostics → Microphone."
+            )
+            self._emit_state(AppState.IDLE)
+            return
         self._emit_state(AppState.LISTENING)
 
     async def _auto_stop_after_pause(self):
@@ -494,7 +545,14 @@ class CompanionManager(QObject):
         await self._end_capture_and_process()
 
     async def _end_capture_and_process(self):
-        pcm = self._listener.stop_recording()
+        try:
+            pcm = self._listener.stop_recording()
+        except Exception as e:
+            _log.exception("mic stop failed")
+            self.sig_error.emit(f"Microphone capture failed: {e}")
+            self._emit_state(AppState.IDLE)
+            return
+        _log.info("captured %.1fs of audio", len(pcm) / 32000)
         if len(pcm) < 3200:  # < 0.1s of audio — ignore
             self._emit_state(AppState.IDLE)
             return
@@ -503,8 +561,13 @@ class CompanionManager(QObject):
         pointing_held = False  # track whether we told overlay to hold dwell
 
         try:
-            # 1. Transcribe
-            transcript = await self._get_stt().transcribe(pcm)
+            # 1. Transcribe — bounded so a hung/downloading STT model can
+            # never freeze the UI on "Thinking..." forever
+            transcript = await asyncio.wait_for(
+                self._get_stt().transcribe(pcm), timeout=90,
+            )
+            _log.info("transcript: %r (provider=%s)",
+                      transcript[:120], cfg.llm_provider())
             if not transcript.strip():
                 self._emit_state(AppState.IDLE)
                 return
@@ -1135,7 +1198,7 @@ class CompanionManager(QObject):
         plain TTS when the response contains no drawings."""
         segments = self._segment_lesson(full_response)
         if not any(shapes for _, shapes in segments):
-            await self._get_tts().speak(clean)
+            await self._get_tts().speak(_speakable(clean))
             return
 
         try:
@@ -1161,7 +1224,7 @@ class CompanionManager(QObject):
                     draw_end += 1.0
             if text:
                 try:
-                    await self._get_tts().speak(text)
+                    await self._get_tts().speak(_speakable(text))
                 except asyncio.CancelledError:
                     raise
                 except Exception:
