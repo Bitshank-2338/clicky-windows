@@ -245,6 +245,8 @@ def main():
     tray.on_ollama_set_model.connect(manager.set_ollama_model)
     tray.on_ollama_pull.connect(manager.pull_ollama_model)
     tray.on_ollama_refresh.connect(manager.refresh_ollama_models)
+    tray.on_set_mic_device.connect(manager.set_mic_device)
+    tray.on_set_response_language.connect(manager.set_response_language)
 
     # When the installed-model list arrives, push it into the tray submenu
     manager.sig_ollama_models.connect(tray.set_ollama_models)

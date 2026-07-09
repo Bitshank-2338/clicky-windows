@@ -386,6 +386,7 @@ class CompanionManager(QObject):
         self._listener = AmbientListener(
             on_level=self._handle_level,
             on_wake=self._handle_wake,
+            device=cfg.mic_device_index,
         )
 
         # Background asyncio loop
@@ -797,8 +798,11 @@ class CompanionManager(QObject):
 
             # ── Per-turn enrichment: code mode, language, OCR, attached docs ──
             code_active = self._code_mode_auto and code_mode.is_code_window(title)
-            lang_code = (multilang.detect_language(transcript)
-                         if self._multilang else "en")
+            if cfg.response_language:
+                lang_code = cfg.response_language   # user-forced — always wins
+            else:
+                lang_code = (multilang.detect_language(transcript)
+                             if self._multilang else "en")
 
             # OCR fallback for fine print (only if user actually asks to read)
             ocr_extra = ""
@@ -1332,6 +1336,28 @@ class CompanionManager(QObject):
         # Force the provider instance to re-read cfg on next call
         if cfg.llm_provider() == "ollama":
             self._llm = None
+
+    def set_response_language(self, code: str):
+        """Tray callback — pin Clicky's reply language ('' = auto-detect)."""
+        cfg.response_language = code
+
+    def set_mic_device(self, device_index: int):
+        """Tray callback — switch input device without restarting the app."""
+        cfg.mic_device_index = device_index if device_index >= 0 else None
+        try:
+            self._listener.stop()
+        except Exception:
+            pass
+        from audio.ambient_listener import AmbientListener
+        self._listener = AmbientListener(
+            on_level=self._handle_level,
+            on_wake=self._handle_wake,
+            device=cfg.mic_device_index,
+        )
+        try:
+            self._listener.start()
+        except Exception as e:
+            self.sig_error.emit(f"Could not start mic: {e}")
 
     def pull_ollama_model(self, name: str):
         """Trigger `ollama pull <name>` in the background. Status via sig_ollama_pull_status."""

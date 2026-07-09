@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import numpy as np
 import sounddevice as sd
 
-from audio.capture import pcm16_to_wav, SAMPLE_RATE
+from audio.capture import pcm16_to_wav, resample_pcm, SAMPLE_RATE
 
 
 class Mode(Enum):
@@ -54,9 +54,12 @@ class AmbientListener:
         self,
         on_level: Callable[[float], None],
         on_wake: Callable[[], None],
+        device: Optional[int] = None,
     ):
         self._on_level = on_level
         self._on_wake = on_wake
+        self._device = device       # None = system default input device
+        self._stream_rate = SAMPLE_RATE   # actual rate the stream opens at
 
         self._mode: Mode = Mode.STANDBY
         self._stream: Optional[sd.InputStream] = None
@@ -87,13 +90,30 @@ class AmbientListener:
         if self._running:
             return
         self._running = True
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            blocksize=FRAMES_PER_BLOCK,
-            callback=self._callback,
-        )
+        try:
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                blocksize=FRAMES_PER_BLOCK,
+                callback=self._callback,
+                device=self._device,
+            )
+            self._stream_rate = SAMPLE_RATE
+        except Exception:
+            # Device doesn't support 16kHz directly — open at its native
+            # rate and resample every block to 16kHz for Whisper.
+            info = sd.query_devices(self._device, "input")
+            native_rate = int(info["default_samplerate"])
+            self._stream_rate = native_rate
+            self._stream = sd.InputStream(
+                samplerate=native_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=int(native_rate * BLOCK_MS / 1000),
+                callback=self._callback,
+                device=self._device,
+            )
         self._stream.start()
 
     def stop(self):
@@ -133,6 +153,11 @@ class AmbientListener:
             return
 
         pcm_int16 = indata[:, 0] if indata.ndim == 2 else indata
+        if self._stream_rate != SAMPLE_RATE:
+            pcm_int16 = np.frombuffer(
+                resample_pcm(pcm_int16.tobytes(), self._stream_rate, SAMPLE_RATE),
+                dtype=np.int16,
+            )
         pcm_float = pcm_int16.astype(np.float32) / 32768.0
         rms = float(np.sqrt(np.mean(pcm_float ** 2)))
         self._on_level(rms)

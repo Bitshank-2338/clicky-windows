@@ -37,6 +37,15 @@ class Config:
     # STT
     deepgram_api_key: Optional[str] = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY") or None)
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "base"))
+    # ISO code (e.g. "de", "en"). Empty = auto-detect language per utterance.
+    whisper_language: str = field(default_factory=lambda: os.getenv("WHISPER_LANGUAGE", ""))
+    # sounddevice input device index. Empty/unset = system default mic.
+    mic_device_index: Optional[int] = field(default_factory=lambda: (
+        int(v) if (v := os.getenv("MIC_DEVICE_INDEX", "").strip()) else None
+    ))
+    # Fixed reply language (ISO 639-1, e.g. "de"). Empty = auto-detect per
+    # message (can mix languages if transcription is inconsistent).
+    response_language: str = field(default_factory=lambda: os.getenv("RESPONSE_LANGUAGE", ""))
 
     # TTS
     elevenlabs_api_key: Optional[str] = field(default_factory=lambda: os.getenv("ELEVENLABS_API_KEY") or None)

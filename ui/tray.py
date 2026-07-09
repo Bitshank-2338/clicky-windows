@@ -51,6 +51,8 @@ class TrayManager(QObject):
     on_attach_doc         = pyqtSignal()
     on_run_setup          = pyqtSignal()
     on_diagnostics        = pyqtSignal()
+    on_set_mic_device     = pyqtSignal(int)     # sounddevice input device index
+    on_set_response_language = pyqtSignal(str)  # "" = auto-detect, else ISO code
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,6 +72,7 @@ class TrayManager(QObject):
         )
         self._search_enabled = True
         self._wake_enabled = True
+        self._response_language = ""
         self._slow_enabled = False
         self._quiz_enabled = False
         self._privacy_enabled = True
@@ -146,6 +149,8 @@ class TrayManager(QObject):
         wake_action.setChecked(self._wake_enabled)
         wake_action.triggered.connect(self._toggle_wake)
         self._wake_action = wake_action
+
+        self._build_language_submenu(menu)
 
         # ── Tutor toggles ──
         menu.addSeparator()
@@ -250,6 +255,7 @@ class TrayManager(QObject):
 
         # ── Setup / Diagnostics ──
         setup_menu = menu.addMenu("Setup && Diagnostics")
+        self._build_mic_submenu(setup_menu)
         run_setup = setup_menu.addAction("Run setup wizard again…")
         run_setup.triggered.connect(self.on_run_setup)
         diag = setup_menu.addAction("Save diagnostics report…")
@@ -263,6 +269,50 @@ class TrayManager(QObject):
         self._tray.setContextMenu(menu)
         # Keep refs to prevent GC
         self._menu = menu
+
+    def _build_language_submenu(self, parent_menu: QMenu):
+        """Lets the user pin Clicky's reply language instead of relying on
+        (sometimes unreliable) auto-detect from the transcript."""
+        from tutor_features.multilang import _LANG_VOICE
+
+        current = getattr(self, "_response_language", "")
+        lang_menu = parent_menu.addMenu(
+            f"Reply language: {_LANG_VOICE.get(current, ('Auto-detect',))[0] if current else 'Auto-detect'}"
+        )
+
+        auto_act = lang_menu.addAction("Auto-detect")
+        auto_act.setCheckable(True)
+        auto_act.setChecked(current == "")
+        auto_act.triggered.connect(lambda: self.on_set_response_language.emit(""))
+
+        lang_menu.addSeparator()
+        for code, (name, _voice) in _LANG_VOICE.items():
+            act = lang_menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(current == code)
+            act.triggered.connect(lambda checked, c=code: self.on_set_response_language.emit(c))
+
+    def _build_mic_submenu(self, parent_menu: QMenu):
+        """Lists available input devices so the user can pick a mic without
+        digging through Windows sound settings."""
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            default_idx = sd.default.device[0]
+        except Exception:
+            return  # sounddevice not ready yet — skip silently, not fatal
+
+        mic_menu = parent_menu.addMenu("Microphone")
+        for idx, dev in enumerate(devices):
+            if dev.get("max_input_channels", 0) <= 0:
+                continue
+            label = dev["name"]
+            if idx == default_idx:
+                label += "  (system default)"
+            act = mic_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(idx == getattr(self, "_active_mic_index", default_idx))
+            act.triggered.connect(lambda checked, i=idx: self.on_set_mic_device.emit(i))
 
     def _build_ollama_submenu(self, parent_menu: QMenu, providers: dict):
         """Vision/Text model pickers + 'Pull recommended' for Ollama."""
