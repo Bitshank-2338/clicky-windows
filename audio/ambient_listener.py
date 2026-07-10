@@ -33,6 +33,9 @@ SILENCE_BLOCKS_END = 20              # ~600ms of silence ends a segment
 MAX_SEGMENT_BLOCKS = 120             # ~3.6s max wake-word segment
 PRE_ROLL_BLOCKS    = 18              # ~540ms of pre-roll for the wake word
 
+REC_MIN_SPEECH_BLOCKS  = 3    # ~90ms of speech before we start tracking end-silence
+REC_SILENCE_BLOCKS_END = 22   # ~660ms of silence after speech ends the recording
+
 # Wake phrases — whisper tiny often mis-transcribes "clicky" so we cover variants
 WAKE_WORDS = (
     "clicky", "click e", "click he", "click me", "clickie", "clicki",
@@ -75,6 +78,9 @@ class AmbientListener:
 
         # Recording buffer (hotkey push-to-talk OR post-wake capture)
         self._rec_buffer: list[bytes] = []
+        self._rec_speech_blocks = 0
+        self._rec_started_speech = False
+        self._rec_silence_blocks = 0
 
         # Lazy tiny whisper for wake word
         self._wake_model = None
@@ -129,7 +135,16 @@ class AmbientListener:
     def start_recording(self) -> None:
         """Switch to RECORDING mode; all audio buffered for STT."""
         self._rec_buffer = []
+        self._rec_speech_blocks = 0
+        self._rec_started_speech = False
+        self._rec_silence_blocks = 0
         self._mode = Mode.RECORDING
+
+    def recording_should_stop(self) -> bool:
+        """True once the user has spoken and then paused long enough that
+        they're clearly done — lets the caller end the recording as soon as
+        they finish talking instead of waiting out a fixed timeout."""
+        return self._rec_started_speech and self._rec_silence_blocks >= REC_SILENCE_BLOCKS_END
 
     def stop_recording(self) -> bytes:
         """Return buffered PCM16 bytes and resume standby."""
@@ -164,6 +179,14 @@ class AmbientListener:
 
         if self._mode == Mode.RECORDING:
             self._rec_buffer.append(pcm_int16.tobytes())
+            is_speech = rms > ENERGY_THRESHOLD
+            if is_speech:
+                self._rec_speech_blocks += 1
+                self._rec_silence_blocks = 0
+                if self._rec_speech_blocks >= REC_MIN_SPEECH_BLOCKS:
+                    self._rec_started_speech = True
+            elif self._rec_started_speech:
+                self._rec_silence_blocks += 1
             return
 
         # Standby: VAD-based segment capture for wake-word
