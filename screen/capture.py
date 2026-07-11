@@ -65,7 +65,7 @@ def _query_dpi_scale() -> float:
         return 1.0
 
 
-def capture_all_screens(max_width: int = 1280) -> List[ScreenShot]:
+def capture_all_screens(max_width: int = 1024) -> List[ScreenShot]:
     """Capture all monitors. Each ScreenShot carries everything needed
     to convert detection coords back into logical screen space."""
     dpi = _query_dpi_scale()

@@ -534,12 +534,16 @@ class CompanionManager(QObject):
         self._emit_state(AppState.LISTENING)
 
     async def _auto_stop_after_pause(self):
-        """When triggered by wake word, wait for user to finish speaking."""
+        """When triggered by wake word, wait for the user to finish
+        speaking — ends as soon as silence is detected after they've
+        talked, instead of always waiting out the full timeout."""
         import time
         max_total_s = 10.0
         start_t = time.monotonic()
         while self._state == AppState.LISTENING:
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.1)
+            if self._listener.recording_should_stop():
+                break
             if time.monotonic() - start_t > max_total_s:
                 break
         await self._end_capture_and_process()
@@ -852,7 +856,7 @@ class CompanionManager(QObject):
             # 6. Update per-app history
             history.append(Message(role="user", content=transcript))
             history.append(Message(role="assistant", content=full_response))
-            self._app_memory[ak] = history[-20:]
+            self._app_memory[ak] = history[-10:]
 
             # Multistep: parse numbered steps for later "next" invocations
             if multistep and not self._lesson_steps:
@@ -1210,7 +1214,9 @@ class CompanionManager(QObject):
             _shape_length = None
 
         draw_end = time.monotonic()
-        for text, shapes in segments:
+        tts = self._get_tts()
+        prefetch_task = None
+        for idx, (text, shapes) in enumerate(segments):
             if self._cancel_flag:
                 break
             draw_end = max(draw_end, time.monotonic())
@@ -1224,7 +1230,22 @@ class CompanionManager(QObject):
                     draw_end += 1.0
             if text:
                 try:
-                    await self._get_tts().speak(_speakable(text))
+                    # Use audio already being generated during the previous
+                    # segment's playback if we have it; otherwise synthesize
+                    # now (first segment, or a provider without prefetch).
+                    audio = await prefetch_task if prefetch_task else await tts.synthesize(_speakable(text))
+                    prefetch_task = None
+                    # Start the NEXT segment's TTS generation now, in
+                    # parallel with playing this one — removes the network
+                    # round-trip from between-sentence latency.
+                    next_text = segments[idx + 1][0] if idx + 1 < len(segments) else None
+                    if next_text:
+                        prefetch_task = asyncio.ensure_future(tts.synthesize(_speakable(next_text)))
+                    if audio:
+                        from audio.playback import play_mp3_async
+                        await play_mp3_async(audio)
+                    else:
+                        await tts.speak(_speakable(text))
                 except asyncio.CancelledError:
                     raise
                 except Exception:

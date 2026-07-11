@@ -1,4 +1,5 @@
 import base64
+import os
 from typing import AsyncIterator, List
 
 import httpx
@@ -24,6 +25,18 @@ class OllamaProvider(BaseLLMProvider):
         self._base = cfg.ollama_host.rstrip("/")
         # Kept for backward compat with old code paths reading self._model
         self._model = cfg.ollama_model
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Reuses one pooled connection instead of a fresh TCP+TLS handshake
+        per request — noticeable latency win since Ollama runs on localhost
+        but every request still pays connection setup cost otherwise."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=120,
+                limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+            )
+        return self._client
 
     def _pick_model(self, has_screenshots: bool) -> str:
         return cfg.get_ollama_model("vision" if has_screenshots else "text")
@@ -59,53 +72,61 @@ class OllamaProvider(BaseLLMProvider):
             "model": chosen,
             "messages": messages,
             "stream": True,
-            "options": {"num_predict": 1024},
+            # keep_alive: hold the model in VRAM/RAM between requests so the
+            # next question doesn't pay the multi-second reload cost.
+            "keep_alive": "10m",
+            "options": {
+                "num_predict": 1024,
+                "num_gpu": -1,       # offload all layers to GPU if possible
+                "num_ctx": 4096,     # enough for screenshot + short history
+                "num_thread": os.cpu_count() or 4,
+            },
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
-                "POST",
-                f"{self._base}/api/chat",
-                json=payload,
-            ) as response:
-                if response.status_code == 404:
-                    # Surface a useful error when the chosen model isn't
-                    # installed locally — students hit this constantly.
-                    raise RuntimeError(
-                        f"Ollama doesn't have '{chosen}' installed. "
-                        f"Run `ollama pull {chosen}` or pick another model "
-                        f"from Tray → Ollama."
-                    )
-                response.raise_for_status()
-                import json
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        chunk = data.get("message", {}).get("content", "")
-                        if chunk:
-                            yield chunk
-                        if data.get("done"):
-                            break
-                    except json.JSONDecodeError:
-                        continue
+        client = self._get_client()
+        async with client.stream(
+            "POST",
+            f"{self._base}/api/chat",
+            json=payload,
+        ) as response:
+            if response.status_code == 404:
+                # Surface a useful error when the chosen model isn't
+                # installed locally — students hit this constantly.
+                raise RuntimeError(
+                    f"Ollama doesn't have '{chosen}' installed. "
+                    f"Run `ollama pull {chosen}` or pick another model "
+                    f"from Tray → Ollama."
+                )
+            response.raise_for_status()
+            import json
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    chunk = data.get("message", {}).get("content", "")
+                    if chunk:
+                        yield chunk
+                    if data.get("done"):
+                        break
+                except json.JSONDecodeError:
+                    continue
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/api/tags")
-                return r.status_code == 200
+            client = self._get_client()
+            r = await client.get(f"{self._base}/api/tags", timeout=5)
+            return r.status_code == 200
         except Exception:
             return False
 
     async def list_models(self) -> List[str]:
         """Return all installed model names (flat list)."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/api/tags")
-                data = r.json()
-                return [m["name"] for m in data.get("models", [])]
+            client = self._get_client()
+            r = await client.get(f"{self._base}/api/tags", timeout=5)
+            data = r.json()
+            return [m["name"] for m in data.get("models", [])]
         except Exception:
             return []
 
