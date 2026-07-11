@@ -102,7 +102,7 @@ async def play_mp3_async(mp3_bytes: bytes) -> None:
 
     _arm_audio()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     pcm, sr = await loop.run_in_executor(None, decode_mp3_to_pcm, mp3_bytes)
     if pcm.size == 0:
         return
