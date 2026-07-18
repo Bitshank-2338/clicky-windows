@@ -341,7 +341,7 @@ class CompanionManager(QObject):
         self._start_sleep_watchdog()
         # On startup, refresh any stale model cache in the background.
         # 30-day TTL means this is a once-a-month no-op for most launches.
-        self._submit(self._refresh_stale_models())
+        self._submit(self._refresh_stale_models(), track=False)
 
     async def _refresh_stale_models(self):
         try:
@@ -412,10 +412,12 @@ class CompanionManager(QObject):
         if self._state != AppState.IDLE:
             self._emit_state(AppState.IDLE)
 
-    def _submit(self, coro):
+    def _submit(self, coro, track: bool = True):
         if not self._loop:
             return
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        if track:
+            self._current_task = fut
 
         def _observe(f):
             try:
@@ -430,6 +432,9 @@ class CompanionManager(QObject):
                     self._emit_state(AppState.IDLE)
                 except Exception:
                     pass
+            finally:
+                if track and self._current_task is f:
+                    self._current_task = None
         fut.add_done_callback(_observe)
 
     # ── Provider lazy init ────────────────────────────────────────────────────
@@ -1256,14 +1261,14 @@ class CompanionManager(QObject):
             try:
                 from ai.github_copilot_provider import cache_is_stale
                 if cache_is_stale():
-                    self._submit(self._refresh_copilot_models())
+                    self._submit(self._refresh_copilot_models(), track=False)
             except Exception:
                 pass
         elif name in ("claude", "openai", "gemini"):
             try:
                 from ai.model_registry import cache_is_stale as _stale
                 if _stale(name):
-                    self._submit(self._refresh_one_model_list(name))
+                    self._submit(self._refresh_one_model_list(name), track=False)
             except Exception:
                 pass
         elif name == "ollama":
@@ -1280,7 +1285,7 @@ class CompanionManager(QObject):
 
     def refresh_copilot_models(self):
         """Public — bound to the tray 'Refresh Copilot models' action."""
-        self._submit(self._refresh_copilot_models())
+        self._submit(self._refresh_copilot_models(), track=False)
 
     async def _refresh_copilot_models(self):
         try:
@@ -1556,6 +1561,14 @@ class CompanionManager(QObject):
                 tts.stop()
             except Exception:
                 pass
+        # Cancel the current asyncio task if still active.
+        if self._current_task is not None and not self._current_task.done():
+            try:
+                self._current_task.cancel()
+            except Exception:
+                pass
+            finally:
+                self._current_task = None
         # Clear any stored lesson so "stop" really means "back to zero"
         self._lesson_steps = []
         self._lesson_step_idx = 0
