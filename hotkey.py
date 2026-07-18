@@ -80,6 +80,8 @@ class GlobalHotkeyMonitor:
         self._has_win = any(p in ("win", "windows", "cmd") for p in self._parts)
         self._modifier_only = all(p in _MOD_ALIASES for p in self._parts)
         self._hook_handle = None
+        self._press_handle = None
+        self._release_handle = None
         # Canonical set of tokens the combo needs, and our own live key-state.
         # We track state from the raw event stream instead of is_pressed():
         # inside a hook callback the lib's state table may not include the
@@ -89,13 +91,18 @@ class GlobalHotkeyMonitor:
         self._down: set = set()
 
     def start(self):
-        if self._modifier_only:
-            # No terminal key — watch the global key stream and track state.
-            self._hook_handle = keyboard.hook(self._on_any_event)
-        else:
-            terminal = self._parts[-1]
-            keyboard.on_press_key(terminal, self._handle_press)
-            keyboard.on_release_key(terminal, self._handle_release)
+        try:
+            if self._modifier_only:
+                # No terminal key — watch the global key stream and track state.
+                self._hook_handle = keyboard.hook(self._on_any_event)
+            else:
+                terminal = self._parts[-1]
+                self._press_handle = keyboard.on_press_key(terminal, self._handle_press)
+                self._release_handle = keyboard.on_release_key(terminal, self._handle_release)
+        except Exception as e:
+            # Logging is not available here by default in this file, so fail
+            # silently but don't crash startup.
+            print(f"[hotkey] failed to start: {e}")
 
     # ── Modifier-only mode ────────────────────────────────────────────────────
 
@@ -156,7 +163,18 @@ class GlobalHotkeyMonitor:
             except Exception:
                 pass
             self._hook_handle = None
-        keyboard.unhook_all()
+        if hasattr(self, '_press_handle') and self._press_handle is not None:
+            try:
+                keyboard.unhook(self._press_handle)
+            except Exception:
+                pass
+            self._press_handle = None
+        if hasattr(self, '_release_handle') and self._release_handle is not None:
+            try:
+                keyboard.unhook(self._release_handle)
+            except Exception:
+                pass
+            self._release_handle = None
 
 
 class StopHotkey:
@@ -170,6 +188,18 @@ class StopHotkey:
     def __init__(self, on_stop: Callable[[], None], key: str = "esc"):
         self._on_stop = on_stop
         self._key = key
+        self._handle = None
 
     def start(self):
-        keyboard.add_hotkey(self._key, self._on_stop, suppress=False)
+        try:
+            self._handle = keyboard.add_hotkey(self._key, self._on_stop, suppress=False)
+        except Exception:
+            print(f"[hotkey] failed to register stop key: {self._key}")
+
+    def stop(self):
+        if self._handle is not None:
+            try:
+                keyboard.remove_hotkey(self._handle)
+            except Exception:
+                pass
+            self._handle = None
