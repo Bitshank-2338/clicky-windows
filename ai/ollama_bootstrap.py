@@ -50,9 +50,84 @@ def is_ollama_running(timeout: float = 1.5) -> bool:
         return False
 
 
+def find_ollama_binary() -> Optional[Path]:
+    """Locate ollama.exe — PATH first, then the standard install locations.
+
+    Ollama's Windows installer does not always add itself to the PATH of an
+    already-running process, so a PATH-only check reported "not installed" for
+    users who plainly had it. That misdetection is what made setup re-download
+    and re-run the ~700 MB installer on machines that needed neither.
+    """
+    on_path = shutil.which("ollama")
+    if on_path:
+        return Path(on_path)
+
+    candidates = []
+    for env_var in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMW6432"):
+        base = os.environ.get(env_var)
+        if not base:
+            continue
+        candidates.append(Path(base) / "Programs" / "Ollama" / "ollama.exe")
+        candidates.append(Path(base) / "Ollama" / "ollama.exe")
+
+    for c in candidates:
+        try:
+            if c.is_file():
+                return c
+        except OSError:
+            continue
+    return None
+
+
 def is_ollama_installed() -> bool:
-    """Return True if the `ollama` binary is on PATH (server may still be off)."""
-    return shutil.which("ollama") is not None
+    """Return True if the ollama binary exists anywhere (server may be off)."""
+    return find_ollama_binary() is not None
+
+
+def start_ollama_server() -> bool:
+    """Start the local Ollama server in the background. True if we launched it.
+
+    Prefers `ollama app.exe` (the tray app, which supervises the server) and
+    falls back to `ollama serve`. Detached + windowless so no console flashes
+    up behind Clicky.
+    """
+    exe = find_ollama_binary()
+    if exe is None:
+        return False
+
+    app_exe = exe.with_name("ollama app.exe")
+    cmd = [str(app_exe)] if app_exe.is_file() else [str(exe), "serve"]
+
+    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — outlives Clicky and never
+    # shows a console window.
+    creationflags = 0x00000008 | 0x00000200
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def ensure_ollama_running(timeout: float = 25.0) -> bool:
+    """Get Ollama serving, without downloading anything if it's already here.
+
+    Order: already up → start the installed copy and wait → give up (the
+    caller then offers the installer). Returns True once the server answers.
+    """
+    if is_ollama_running():
+        return True
+    if not is_ollama_installed():
+        return False
+    if not start_ollama_server():
+        return False
+    return wait_for_ollama_server(timeout=timeout)
 
 
 def list_installed_models() -> List[str]:

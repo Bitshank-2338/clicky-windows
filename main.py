@@ -46,16 +46,28 @@ def _copilot_login_flow(tray, panel, manager):
         tray.show_notification("GitHub Copilot — enter this code", user_code)
 
     def _worker():
+        # Sign-in and model discovery are reported separately on purpose: the
+        # device flow was succeeding and saving a valid token, then a failing
+        # model refresh surfaced as "Copilot login failed" and sent users off
+        # re-authorising something that was never broken.
         try:
             asyncio.run(device_login(on_code=_on_code))
-            tray.show_notification(
-                "GitHub Copilot",
-                "Signed in! Refreshing model list…"
-            )
-            manager.refresh_copilot_models()
         except Exception as e:
             tray.show_notification("Copilot login failed", str(e))
             panel.show_copilot_error(str(e))
+            return
+
+        tray.show_notification("GitHub Copilot", "Signed in! Refreshing model list…")
+        try:
+            manager.refresh_copilot_models()
+        except Exception as e:
+            tray.show_notification(
+                "Copilot signed in — model list unavailable", str(e)
+            )
+            panel.show_copilot_error(
+                f"Signed in successfully, but the model list could not be "
+                f"loaded:\n{e}\n\nTry Tray → Model → Refresh Copilot models."
+            )
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -298,6 +310,24 @@ def main():
         _setup_keepalive[0] = wiz
     tray.on_run_setup.connect(_run_setup_again)
 
+    def _open_api_keys():
+        from ui.api_keys_dialog import ApiKeysDialog
+        dlg = ApiKeysDialog()
+
+        def _applied():
+            # A new key can change which provider is active, so refresh every
+            # surface that renders the provider name or model list.
+            provider = cfg.llm_provider()
+            manager.set_active_provider(provider)
+            panel.refresh_for_provider(provider)
+            tray.rebuild_menu()
+            tray.show_notification("Clicky", f"API keys saved — using {provider}")
+
+        dlg.keys_saved.connect(_applied)
+        dlg.show()
+        _setup_keepalive[1] = dlg   # keep a reference so Qt doesn't GC it
+    tray.on_api_keys.connect(_open_api_keys)
+
     def _save_diagnostics():
         import datetime, json, platform, traceback
         from ai import ollama_bootstrap as ob
@@ -389,9 +419,10 @@ def main():
     sys.exit(app.exec())
 
 
-# Module-level slot used to keep a reference to the setup wizard alive while
-# Qt is running (PyQt will GC it otherwise and the dialog will vanish).
-_setup_keepalive: list = [None]
+# Module-level slots keeping references to the setup wizard [0] and the API
+# keys dialog [1] alive while Qt is running (PyQt will GC them otherwise and
+# the dialog will vanish).
+_setup_keepalive: list = [None, None]
 
 
 if __name__ == "__main__":

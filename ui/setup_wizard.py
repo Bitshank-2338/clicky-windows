@@ -4,13 +4,22 @@ First-run setup wizard.
 Shown once on the first launch (or whenever the user clicks
 "Tray → Run setup again…"). Walks the user through:
 
-  1. Detect Ollama       → install if missing
-  2. Detect text model   → pull if missing
-  3. Detect vision model → pull if missing  (optional, larger)
+  0. What Clicky is and how to use it
+  1. Pick an engine — free local Ollama, or a cloud API key
+  2. Detect Ollama       → start it if installed, install only if truly absent
+  3. Detect text model   → pull if missing
+  4. Detect vision model → pull if missing  (optional, larger)
 
-Everything is optional — the user can Skip at any step and use API keys
-instead. The wizard never blocks the main app from starting; the user can
-close it and Clicky's panel banner will keep nagging until Ollama is set up.
+Everything is optional — the user can Skip at any step. The wizard never
+blocks the main app from starting.
+
+Two things this deliberately gets right, because the shipped 1.2.0 build got
+them wrong:
+
+  • Ollama detection looks for the *binary*, not just a live server, and
+    starts an installed-but-stopped copy instead of re-downloading 700 MB.
+  • There is a real API-key screen, so "Skip — I'll use an API key" leads
+    somewhere instead of dead-ending at a file the user has to go find.
 """
 
 from __future__ import annotations
@@ -18,13 +27,10 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from typing import Callable
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QProgressBar, QFrame, QWidget, QStackedWidget, QSizePolicy
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar,
 )
 
 from ai import ollama_bootstrap as ob
@@ -50,10 +56,14 @@ def mark_setup_complete() -> None:
         pass
 
 
+def _pretty_hotkey() -> str:
+    return "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
+
+
 # ─── Wizard ───────────────────────────────────────────────────────────────────
 
 class SetupWizard(QDialog):
-    """One-window wizard with three pages: Ollama install → text model → vision model."""
+    """One-window wizard: welcome → engine choice → Ollama/keys → done."""
 
     progress_signal = pyqtSignal(str, float)
     finished_signal = pyqtSignal(bool, str)   # ok, message
@@ -62,7 +72,7 @@ class SetupWizard(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Clicky Setup")
         self.setModal(False)
-        self.setMinimumSize(560, 380)
+        self.setMinimumSize(600, 420)
         self.setStyleSheet("""
             QDialog { background: #0e1014; color: #e8eaed; }
             QLabel  { color: #e8eaed; }
@@ -89,10 +99,13 @@ class SetupWizard(QDialog):
             QProgressBar::chunk { background: #1f6feb; border-radius: 6px; }
         """)
 
+        self._keys_dialog = None
+        self._worker: threading.Thread | None = None
+        self._next_step = "done"
+
         self._build_ui()
         self.progress_signal.connect(self._on_progress)
         self.finished_signal.connect(self._on_finished)
-        self._worker: threading.Thread | None = None
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -105,15 +118,11 @@ class SetupWizard(QDialog):
         self.title.setObjectName("title")
         layout.addWidget(self.title)
 
-        self.subtitle = QLabel(
-            "Clicky uses Ollama to run AI locally on your computer — for free, "
-            "with no API keys required. Let's set it up in 2 minutes."
-        )
+        self.subtitle = QLabel("")
         self.subtitle.setObjectName("subtitle")
         self.subtitle.setWordWrap(True)
         layout.addWidget(self.subtitle)
 
-        # status block
         self.status = QLabel("")
         self.status.setObjectName("status")
         self.status.setWordWrap(True)
@@ -128,16 +137,22 @@ class SetupWizard(QDialog):
 
         layout.addStretch(1)
 
-        # buttons row
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self.skip_btn = QPushButton("Skip — I'll use an API key")
+        self.skip_btn = QPushButton("Skip")
         self.skip_btn.setObjectName("secondary")
         self.skip_btn.clicked.connect(self._on_skip)
         btn_row.addWidget(self.skip_btn)
 
         btn_row.addStretch(1)
+
+        # Middle button — the "other option" on branching pages.
+        self.alt_btn = QPushButton("")
+        self.alt_btn.setObjectName("secondary")
+        self.alt_btn.clicked.connect(self._on_alt)
+        self.alt_btn.hide()
+        btn_row.addWidget(self.alt_btn)
 
         self.action_btn = QPushButton("Get started")
         self.action_btn.clicked.connect(self._on_action)
@@ -145,7 +160,7 @@ class SetupWizard(QDialog):
 
         layout.addLayout(btn_row)
 
-        self._set_step("intro")
+        self._set_step("welcome")
 
     # ── State machine ────────────────────────────────────────────────────────
 
@@ -153,30 +168,70 @@ class SetupWizard(QDialog):
         self._step = step
         self.progress.hide()
         self.progress.setValue(0)
+        self.status.setText("")
+        self.alt_btn.hide()
+        self.action_btn.setEnabled(True)
+        self.skip_btn.setEnabled(True)
+        self.skip_btn.show()
+        self.skip_btn.setText("Skip")
 
-        if step == "intro":
-            running = ob.is_ollama_running()
-            if running:
-                self.title.setText("Ollama detected ✓")
-                self.subtitle.setText(
-                    "Ollama is already running on your machine. We'll just check that "
-                    "the AI models you need are downloaded."
-                )
-                self.action_btn.setText("Check models")
-            else:
-                self.title.setText("Step 1 of 3 — Install Ollama")
-                self.subtitle.setText(
-                    "Ollama is the engine that runs the AI on your computer. "
-                    "We'll download and install it for you (≈700 MB)."
-                )
-                self.action_btn.setText("Install Ollama")
-            self.status.setText("")
+        if step == "welcome":
+            self.title.setText("Meet Clicky")
+            self.subtitle.setText(
+                "Clicky is an AI tutor that lives next to your cursor and can see "
+                "your screen — so it can point at things instead of just describing "
+                "them.\n\n"
+                f"•  Hold {_pretty_hotkey()} anywhere in Windows, or just say "
+                "\"Clicky\", then ask your question out loud.\n"
+                "•  Clicky answers by speaking, and draws arrows, circles and "
+                "labels directly on your screen.\n"
+                "•  Ask it about whatever you're looking at — a PDF, an error "
+                "message, a chart, a settings page.\n"
+                "•  Everything lives in the tray icon: modes, models, and "
+                "settings.\n\n"
+                "Next, pick the AI engine that powers it. Takes about a minute."
+            )
+            self.action_btn.setText("Continue")
+            self.skip_btn.setText("Skip setup")
+
+        elif step == "engine":
+            self.title.setText("Choose your AI engine")
+            self.subtitle.setText(
+                "Free and offline — Ollama runs the AI on your own computer. "
+                "No account, no API key, nothing leaves your machine. It needs a "
+                "one-time model download of a couple of GB.\n\n"
+                "Or bring your own key — Claude, OpenAI or Gemini. Faster and "
+                "smarter, but the provider charges you and your screen is sent to "
+                "their servers.\n\n"
+                "You can change this at any time from the tray menu."
+            )
+            self.action_btn.setText("Use Ollama — free")
+            self.alt_btn.setText("I'll use an API key")
+            self.alt_btn.show()
+
+        elif step == "detect":
+            self.title.setText("Checking for Ollama…")
+            self.subtitle.setText(
+                "Looking for an existing Ollama installation before downloading "
+                "anything."
+            )
+            self.action_btn.setEnabled(False)
+            self.skip_btn.setEnabled(False)
+            self.status.setText("Checking…")
+
+        elif step == "install":
+            self.title.setText("Install Ollama")
+            self.subtitle.setText(
+                "Ollama isn't on this computer yet. It's the engine that runs the "
+                "AI locally — we'll download and install it for you (≈700 MB)."
+            )
+            self.action_btn.setText("Install Ollama")
 
         elif step == "installing":
             self.title.setText("Installing Ollama…")
             self.subtitle.setText(
-                "Downloading the official installer from ollama.com, then launching it. "
-                "Click through any UAC / installer prompts that appear."
+                "Downloading the official installer from ollama.com, then launching "
+                "it. Click through any UAC / installer prompts that appear."
             )
             self.action_btn.setEnabled(False)
             self.skip_btn.setEnabled(False)
@@ -185,15 +240,13 @@ class SetupWizard(QDialog):
 
         elif step == "text_model":
             name = cfg.ollama_text_model
-            self.title.setText("Step 2 of 3 — Download text model")
+            self.title.setText("Download the text model")
             self.subtitle.setText(
-                f"Pulling {name} (≈2 GB). This is what answers when you ask Clicky a question."
+                f"Pulling {name} (≈2 GB). This is what answers when you ask Clicky "
+                f"a question."
             )
             self.action_btn.setText(f"Pull {name}")
-            self.action_btn.setEnabled(True)
-            self.skip_btn.setEnabled(True)
             self.skip_btn.setText("Skip this model")
-            self.status.setText("")
 
         elif step == "pulling_text":
             self.title.setText(f"Pulling {cfg.ollama_text_model}…")
@@ -204,16 +257,14 @@ class SetupWizard(QDialog):
 
         elif step == "vision_model":
             name = cfg.ollama_vision_model
-            self.title.setText("Step 3 of 3 — Download vision model (optional)")
+            self.title.setText("Download the vision model (optional)")
             self.subtitle.setText(
                 f"Pulling {name} (≈3 GB). Needed only when Clicky reads your screen "
-                f"(Pixel-Perfect Pointing, screenshots). You can skip this and add it later."
+                f"— pointing, screenshots, reading charts. You can skip this and "
+                f"add it later from the tray."
             )
             self.action_btn.setText(f"Pull {name}")
-            self.action_btn.setEnabled(True)
-            self.skip_btn.setEnabled(True)
             self.skip_btn.setText("Skip — add later")
-            self.status.setText("")
 
         elif step == "pulling_vision":
             self.title.setText(f"Pulling {cfg.ollama_vision_model}…")
@@ -222,45 +273,82 @@ class SetupWizard(QDialog):
             self.status.setText("Connecting to Ollama…")
             self.progress.show()
 
+        elif step == "keys":
+            self.title.setText("Add an API key")
+            self.subtitle.setText(
+                "Paste a key for Claude, OpenAI or Gemini. Clicky saves it next to "
+                "the app and starts using it right away — you can add, change or "
+                "remove keys later from Tray → Setup & Diagnostics → API Keys."
+            )
+            self.action_btn.setText("Open API Keys…")
+            self.alt_btn.setText("Use Ollama instead")
+            self.alt_btn.show()
+            self.skip_btn.setText("Skip for now")
+            self._refresh_key_status()
+
         elif step == "done":
             self.title.setText("All set 🎉")
-            from config import cfg
-            _hk = "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
+            providers = cfg.describe()
             self.subtitle.setText(
-                f"Clicky is ready. Hold {_hk} anywhere on Windows, "
-                "or just say \"Clicky\" to start a conversation."
+                f"Clicky is ready, running on {providers['llm']}.\n\n"
+                f"•  Hold {_pretty_hotkey()} and speak, or say \"Clicky\".\n"
+                "•  Press Esc to cut a long answer short.\n"
+                "•  Right-click the tray icon for modes, models and settings.\n"
+                "•  Drag a PDF onto the panel to ask questions about it."
             )
             self.action_btn.setText("Start using Clicky")
-            self.action_btn.setEnabled(True)
             self.skip_btn.hide()
-            self.status.setText("")
             mark_setup_complete()
+
+    def _refresh_key_status(self):
+        have = [
+            label for env_var, (_, label) in cfg.API_KEY_FIELDS.items()
+            if cfg.get_api_key(env_var)
+        ]
+        self.status.setText(
+            f"Configured: {', '.join(have)}" if have else "No keys set yet."
+        )
 
     # ── Handlers ─────────────────────────────────────────────────────────────
 
     def _on_action(self):
         s = self._step
-        if s == "intro":
-            if ob.is_ollama_running():
-                self._goto_next_model_step()
-            else:
-                self._set_step("installing")
-                self._start_install_worker()
+
+        if s == "welcome":
+            self._set_step("engine")
+
+        elif s == "engine":
+            self._set_step("detect")
+            self._start_detect_worker()
+
+        elif s == "install":
+            self._set_step("installing")
+            self._start_install_worker()
 
         elif s == "text_model":
             self._set_step("pulling_text")
-            self._start_pull_worker(cfg.ollama_text_model, next_step="vision_model")
+            self._start_pull_worker(cfg.ollama_text_model)
 
         elif s == "vision_model":
             self._set_step("pulling_vision")
-            self._start_pull_worker(cfg.ollama_vision_model, next_step="done")
+            self._start_pull_worker(cfg.ollama_vision_model)
+
+        elif s == "keys":
+            self._open_keys_dialog()
 
         elif s == "done":
             self.accept()
 
+    def _on_alt(self):
+        if self._step == "engine":
+            self._set_step("keys")
+        elif self._step == "keys":
+            self._set_step("detect")
+            self._start_detect_worker()
+
     def _on_skip(self):
         s = self._step
-        if s == "intro":
+        if s in ("welcome", "engine", "install", "keys"):
             mark_setup_complete()
             self.reject()
         elif s == "text_model":
@@ -268,7 +356,46 @@ class SetupWizard(QDialog):
         elif s == "vision_model":
             self._set_step("done")
 
+    def _open_keys_dialog(self):
+        from ui.api_keys_dialog import ApiKeysDialog
+        dlg = ApiKeysDialog(self)
+        dlg.keys_saved.connect(self._refresh_key_status)
+        dlg.finished.connect(lambda _: self._on_keys_closed())
+        dlg.show()
+        self._keys_dialog = dlg   # keep a ref so Qt doesn't GC it
+
+    def _on_keys_closed(self):
+        self._refresh_key_status()
+        if any(cfg.get_api_key(v) for v in cfg.API_KEY_FIELDS):
+            self._set_step("done")
+
     # ── Workers (run on a background thread) ─────────────────────────────────
+
+    def _start_detect_worker(self):
+        """Find/start Ollama without downloading. Never blocks the UI thread."""
+        def _worker():
+            try:
+                if ob.is_ollama_running():
+                    self.finished_signal.emit(True, "running")
+                    return
+                if ob.is_ollama_installed():
+                    self.progress_signal.emit(
+                        "Ollama is installed — starting it…", 0.0
+                    )
+                    ok = ob.ensure_ollama_running(timeout=30)
+                    self.finished_signal.emit(
+                        ok,
+                        "running" if ok else
+                        "Ollama is installed but wouldn't start. Open it from the "
+                        "Start menu, then click Try again."
+                    )
+                    return
+                self.finished_signal.emit(False, "missing")
+            except Exception as e:
+                self.finished_signal.emit(False, f"Could not check Ollama: {e}")
+
+        self._worker = threading.Thread(target=_worker, daemon=True)
+        self._worker.start()
 
     def _start_install_worker(self):
         def _worker():
@@ -279,11 +406,12 @@ class SetupWizard(QDialog):
                         f"Downloading… {pct:.0f}%", pct
                     )
                 )
-                self.progress_signal.emit("Launching installer (approve any UAC prompts)…", 100.0)
+                self.progress_signal.emit(
+                    "Launching installer (approve any UAC prompts)…", 100.0
+                )
                 ob.run_ollama_installer(path, silent=False)
                 self.progress_signal.emit("Waiting for Ollama to start…", 100.0)
-                ok = ob.wait_for_ollama_server(timeout=90)
-                if ok:
+                if ob.ensure_ollama_running(timeout=90):
                     self.finished_signal.emit(True, "")
                 else:
                     self.finished_signal.emit(
@@ -297,9 +425,7 @@ class SetupWizard(QDialog):
         self._worker = threading.Thread(target=_worker, daemon=True)
         self._worker.start()
 
-    def _start_pull_worker(self, model: str, next_step: str):
-        self._next_step = next_step
-
+    def _start_pull_worker(self, model: str):
         def _worker():
             if ob.is_model_installed(model):
                 self.finished_signal.emit(True, "")
@@ -320,6 +446,18 @@ class SetupWizard(QDialog):
         self.progress.setValue(int(pct))
 
     def _on_finished(self, ok: bool, msg: str):
+        s = self._step
+
+        if s == "detect":
+            if ok:
+                self._goto_next_model_step()
+            elif msg == "missing":
+                self._set_step("install")
+            else:
+                self._set_step("install")
+                self.status.setText(f"⚠️ {msg}")
+            return
+
         if not ok:
             self.status.setText(f"⚠️ {msg}")
             self.action_btn.setEnabled(True)
@@ -327,7 +465,6 @@ class SetupWizard(QDialog):
             self.action_btn.setText("Try again")
             return
 
-        s = self._step
         if s == "installing":
             self._goto_next_model_step()
         elif s == "pulling_text":
@@ -336,7 +473,7 @@ class SetupWizard(QDialog):
             self._set_step("done")
 
     def _goto_next_model_step(self):
-        # If text model already there, jump straight to vision step.
+        # Skip straight past anything that's already pulled.
         if not ob.is_model_installed(cfg.ollama_text_model):
             self._set_step("text_model")
         elif not ob.is_model_installed(cfg.ollama_vision_model):
@@ -346,15 +483,13 @@ class SetupWizard(QDialog):
 
 
 def maybe_show_setup_wizard(parent=None) -> SetupWizard | None:
-    """Open the wizard only if it hasn't run before AND something is missing."""
+    """Open the wizard on first run.
+
+    Unlike 1.2.0 this shows even when Ollama is already healthy — a silent
+    first launch left new users with no idea what Clicky was or how to talk to
+    it. The Ollama steps still skip themselves when there's nothing to do.
+    """
     if setup_already_ran():
-        return None
-    if (
-        ob.is_ollama_running()
-        and ob.is_model_installed(cfg.ollama_text_model)
-    ):
-        # Everything is already wired up — don't pester the user.
-        mark_setup_complete()
         return None
 
     w = SetupWizard(parent)

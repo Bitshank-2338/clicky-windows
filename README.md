@@ -81,10 +81,10 @@ The blue triangle sits **35 px right / 25 px below** your real cursor. When you 
 
 | Provider | How to unlock |
 |---|---|
-| **Claude** (Anthropic) | `ANTHROPIC_API_KEY` in `.env` |
-| **OpenAI GPT-4o** | `OPENAI_API_KEY` in `.env` |
+| **Claude** (Anthropic) | Tray → Setup & Diagnostics → API Keys… (or `ANTHROPIC_API_KEY` in `.env`) |
+| **OpenAI GPT-4o** | Tray → Setup & Diagnostics → API Keys… (or `OPENAI_API_KEY` in `.env`) |
 | **GitHub Copilot** | Free for students — device-flow login via tray |
-| **Gemini** | `GOOGLE_API_KEY` in `.env` |
+| **Gemini** | Tray → Setup & Diagnostics → API Keys… (or `GOOGLE_API_KEY` in `.env`) |
 | **Ollama** (local) | Run `ollama serve` — free, always available |
 | **LM Studio** (local) | Start the local server in LM Studio's Developer tab — free, no key |
 
@@ -241,7 +241,14 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configure API keys
-Create `.env` in the project root (copy from `.env.example`):
+
+**Installed a release build?** You don't need to touch a file — open the tray
+icon → **Setup & Diagnostics → API Keys…**, paste your key, and hit Save. The
+first-run wizard offers the same screen. Keys are written to `.env` next to
+`Clicky.exe` for you.
+
+**Running from source?** Create `.env` in the project root (copy from
+`.env.example`):
 
 ```env
 # ── LLM (add whichever you have — at least one required) ──

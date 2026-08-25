@@ -35,8 +35,10 @@ hidden = [
     "ai.hybrid_pointer",
     "ai.figure_detector",
 
-    # First-run setup wizard
+    # First-run setup wizard + the API key screen it opens (both imported
+    # lazily inside functions, so they need to be named explicitly)
     "ui.setup_wizard",
+    "ui.api_keys_dialog",
 
     # Lazy STT providers
     "audio.stt.deepgram_stt",

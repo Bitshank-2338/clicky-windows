@@ -214,6 +214,84 @@ class Config:
         except Exception:
             pass  # non-fatal — runtime switch still works via os.environ
 
+    # ── API key management ───────────────────────────────────────────────
+    #
+    # Keys used to be .env-only, which meant a packaged install had no way to
+    # enter one short of hand-editing a file next to Clicky.exe. These helpers
+    # back the Settings → API Keys dialog.
+
+    # env var name → (dataclass attribute, human label)
+    API_KEY_FIELDS = {
+        "ANTHROPIC_API_KEY":  ("anthropic_api_key",  "Anthropic (Claude)"),
+        "OPENAI_API_KEY":     ("openai_api_key",     "OpenAI (GPT)"),
+        "GOOGLE_API_KEY":     ("google_api_key",     "Google (Gemini)"),
+        "ELEVENLABS_API_KEY": ("elevenlabs_api_key", "ElevenLabs (voice)"),
+        "DEEPGRAM_API_KEY":   ("deepgram_api_key",   "Deepgram (speech-to-text)"),
+        "TAVILY_API_KEY":     ("tavily_api_key",     "Tavily (web search)"),
+    }
+
+    @staticmethod
+    def env_path() -> Path:
+        """The .env Clicky reads and writes — next to Clicky.exe when frozen."""
+        return _HERE / ".env"
+
+    def get_api_key(self, env_var: str) -> str:
+        attr = self.API_KEY_FIELDS.get(env_var, (None, None))[0]
+        return (getattr(self, attr, None) or "") if attr else ""
+
+    def set_api_key(self, env_var: str, value: str) -> None:
+        """Set (or clear) one key: live in this process + persisted to .env."""
+        if env_var not in self.API_KEY_FIELDS:
+            return
+        value = (value or "").strip()
+        attr = self.API_KEY_FIELDS[env_var][0]
+
+        setattr(self, attr, value or None)
+        if value:
+            os.environ[env_var] = value
+        else:
+            os.environ.pop(env_var, None)
+
+        self._write_env(env_var, value)
+
+    def _write_env(self, key: str, value: str) -> None:
+        """Upsert KEY=value in .env, removing the line entirely when cleared."""
+        path = self.env_path()
+        try:
+            lines = (
+                path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if path.exists() else []
+            )
+            out, found = [], False
+            for line in lines:
+                stripped = line.lstrip()
+                if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+                    found = True
+                    if value:
+                        out.append(f"{key}={value}\n")
+                    # cleared → drop the line
+                    continue
+                out.append(line)
+
+            if value and not found:
+                if out and not out[-1].endswith("\n"):
+                    out.append("\n")
+                out.append(f"{key}={value}\n")
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(out), encoding="utf-8")
+        except Exception:
+            pass  # runtime value still applied; persistence is best-effort
+
+    def clear_active_llm(self) -> None:
+        """Unpin the provider so the key-priority chain decides again.
+
+        Used when the key behind a pinned provider is removed — otherwise
+        llm_provider() keeps naming a provider that can no longer answer.
+        """
+        os.environ.pop("CLICKY_ACTIVE_LLM", None)
+        self._write_env("CLICKY_ACTIVE_LLM", "")
+
     def stt_provider(self) -> str:
         # Allow explicit override via env (so users can force whisper_cpp etc.)
         forced = os.getenv("CLICKY_STT", "").strip().lower()

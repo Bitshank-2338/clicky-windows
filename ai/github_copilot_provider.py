@@ -271,15 +271,40 @@ async def fetch_models_live() -> list[dict]:
     return items
 
 
+# Internal / non-conversational models GitHub exposes on /models but which
+# aren't usable as a chat model (search backends, agent scaffolding, the
+# picker's own helper models). Matching is by id prefix/suffix.
+_INTERNAL_PREFIXES = ("copilot-search", "exec-agent", "trajectory-", "oswe-")
+_INTERNAL_SUFFIXES = ("-picker", "-secondary", "-4th")
+
+
+def _is_internal_model(model_id: str) -> bool:
+    mid = (model_id or "").lower()
+    return (
+        mid.startswith(_INTERNAL_PREFIXES) or mid.endswith(_INTERNAL_SUFFIXES)
+    )
+
+
 def _normalise_model(m: dict) -> dict:
-    """Pull out the bits we care about into a flat shape."""
+    """Pull out the bits we care about into a flat shape.
+
+    GitHub reshaped this payload (usage-based billing rollout): `billing` is
+    now null on every model and `model_picker_enabled` is false on every model
+    — including ones the seat can happily use. Treating either as a filter
+    emptied the model list entirely, which surfaced as "Copilot login failed"
+    even though the OAuth handshake had succeeded. We now key off
+    `policy.state` instead, and treat multiplier as unknown when absent.
+    """
     cap = m.get("capabilities", {}) or {}
     supports = cap.get("supports", {}) or {}
-    billing = m.get("billing", {}) or {}
+    billing = m.get("billing") or {}
+    policy = m.get("policy") or {}
+
     multiplier = billing.get("multiplier")
-    if multiplier is None:
-        # Some non-premium models omit the field entirely
+    if multiplier is None and billing:
+        # Older payloads: non-premium models omitted the field entirely.
         multiplier = 0 if not billing.get("is_premium", False) else 1
+
     return {
         "id":          m.get("id") or m.get("name"),
         "label":       m.get("name") or m.get("id"),
@@ -287,41 +312,146 @@ def _normalise_model(m: dict) -> dict:
         "type":        cap.get("type", "chat"),
         "vision":      bool(supports.get("vision", False)),
         "streaming":   bool(supports.get("streaming", True)),
-        "multiplier":  float(multiplier),
-        "is_premium":  bool(billing.get("is_premium", multiplier and multiplier > 0)),
+        # None = GitHub no longer reports a multiplier for this seat.
+        "multiplier":  None if multiplier is None else float(multiplier),
+        "is_premium":  bool(billing.get("is_premium", False)),
+        # "enabled" | "disabled" | "" (no policy = always available)
+        "policy":      (policy.get("state") or "").lower(),
+        "category":    m.get("model_picker_category") or "",
         "picker":      bool(m.get("model_picker_enabled", True)),
     }
 
 
-async def refresh_models_to_cache() -> list[dict]:
+def _usable_models(flat: list[dict]) -> list[dict]:
+    """Chat models this seat can actually call right now.
+
+    Drops embeddings, GitHub's internal scaffolding models, and anything whose
+    policy the user hasn't accepted yet (policy.state == "disabled" — calling
+    those 403s until they opt in at github.com/settings/copilot). A missing
+    policy block means "no opt-in required", so those stay.
+    """
+    return [
+        m for m in flat
+        if m["type"] == "chat"
+        and m["policy"] != "disabled"
+        and not _is_internal_model(m["id"])
+    ]
+
+
+async def _model_answers(client: httpx.AsyncClient, token: str, model_id: str) -> bool:
+    """One tiny non-streaming call to see whether this model is really callable.
+
+    /models advertises far more than /chat/completions accepts — models can be
+    policy-enabled and list /chat/completions in `supported_endpoints` and
+    still 400 with `model_not_supported`. Asking the endpoint directly is the
+    only reliable signal, and it keeps working when GitHub reshuffles the
+    catalogue again.
+    """
+    try:
+        r = await client.post(
+            COPILOT_CHAT_URL,
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "stream": False,
+            },
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Editor-Version": EDITOR_VERSION,
+                "Editor-Plugin-Version": EDITOR_PLUGIN,
+                "Copilot-Integration-Id": "vscode-chat",
+                "Content-Type": "application/json",
+            },
+        )
+        # 200 = usable. 402/429 = usable but quota/rate-limited right now, so
+        # keep it: the user can still pick it once quota resets.
+        return r.status_code in (200, 402, 429)
+    except Exception:
+        return False
+
+
+async def _verify_models(candidates: list[dict]) -> list[dict]:
+    """Probe candidates concurrently, returning only the ones that answer."""
+    token = await fetch_copilot_token_only()
+    sem = asyncio.Semaphore(8)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        async def check(m: dict):
+            async with sem:
+                return m if await _model_answers(client, token, m["id"]) else None
+
+        results = await asyncio.gather(*(check(m) for m in candidates))
+
+    return [m for m in results if m is not None]
+
+
+async def refresh_models_to_cache(verify: bool = True) -> list[dict]:
     """Fetch live + write to %LOCALAPPDATA%\\Clicky\\copilot_models.json."""
     raw = await fetch_models_live()
     flat = [_normalise_model(m) for m in raw if m.get("id")]
-    flat = [m for m in flat if m["type"] == "chat" and m["picker"]]
-    blob = {"fetched_at": time.time(), "models": flat}
+    usable = _usable_models(flat)
+
+    if verify and usable:
+        verified = await _verify_models(usable)
+        # If every probe failed the network is probably down — trust the
+        # catalogue rather than caching nothing.
+        if verified:
+            usable = verified
+
+    # Never cache an empty list — that's the state that made the panel look
+    # like login had failed even though the token was saved.
+    if not usable:
+        blocked = len([m for m in flat if m["policy"] == "disabled"])
+        raise RuntimeError(
+            "Signed in, but no Copilot chat models are callable on this seat"
+            + (f" ({blocked} are turned off — enable them at "
+               f"https://github.com/settings/copilot)." if blocked else ".")
+        )
+
+    blob = {"fetched_at": time.time(), "models": usable}
     _models_cache_path().write_text(json.dumps(blob, indent=2))
-    return flat
+    return usable
+
+
+def _fallback_models() -> list[dict]:
+    """Built-in list used until the first successful /models call.
+
+    These three have been callable on every Copilot tier for years and carry
+    no policy opt-in, so they're a safe floor when the live list is missing.
+    """
+    def _m(mid, label, vendor, vision, category):
+        return {"id": mid, "label": label, "vendor": vendor, "type": "chat",
+                "vision": vision, "streaming": True, "multiplier": None,
+                "is_premium": False, "policy": "", "category": category,
+                "picker": True}
+    return [
+        _m("gpt-4o-mini", "GPT-4o mini", "OpenAI", True,  "lightweight"),
+        _m("gpt-4o",      "GPT-4o",      "OpenAI", True,  "versatile"),
+        _m("gpt-4.1",     "GPT-4.1",     "OpenAI", True,  "versatile"),
+    ]
 
 
 def cached_models() -> list[dict]:
-    """Read the cached model list, or return the built-in fallback if missing."""
+    """Read the cached model list, or return the built-in fallback if missing.
+
+    An empty cached list counts as missing — a stale empty cache is what made
+    the model dropdown render blank after a successful sign-in.
+    """
     p = _models_cache_path()
     if p.exists():
         try:
-            blob = json.loads(p.read_text())
-            return blob.get("models", [])
+            models = json.loads(p.read_text()).get("models") or []
+            if models:
+                # Older caches predate the policy/category keys.
+                for m in models:
+                    m.setdefault("policy", "")
+                    m.setdefault("category", "")
+                    m.setdefault("multiplier", None)
+                return models
         except Exception:
             pass
-    # Conservative fallback — gpt-4o-mini is free across all Copilot tiers
-    # historically. The real list will replace this on first successful call.
-    return [
-        {"id": "gpt-4o-mini",       "label": "GPT-4o mini",       "vendor": "OpenAI",
-         "type": "chat", "vision": True,  "streaming": True, "multiplier": 0.0, "is_premium": False, "picker": True},
-        {"id": "gpt-4o",            "label": "GPT-4o",            "vendor": "OpenAI",
-         "type": "chat", "vision": True,  "streaming": True, "multiplier": 1.0, "is_premium": True,  "picker": True},
-        {"id": "claude-3.5-sonnet", "label": "Claude 3.5 Sonnet", "vendor": "Anthropic",
-         "type": "chat", "vision": True,  "streaming": True, "multiplier": 1.0, "is_premium": True,  "picker": True},
-    ]
+    return _fallback_models()
 
 
 def cache_is_stale() -> bool:
@@ -336,45 +466,69 @@ def cache_is_stale() -> bool:
         return True
 
 
+# Cheapest-first ordering. GitHub's usage-based billing rollout stopped
+# reporting per-model multipliers, so `model_picker_category` is now the only
+# cost signal available on most seats.
+_CATEGORY_RANK = {"lightweight": 0, "versatile": 1, "powerful": 2}
+
+
+def _cost_rank(m: dict) -> float:
+    """Lower = cheaper. Uses multiplier when GitHub still reports one."""
+    mult = m.get("multiplier")
+    if mult is not None:
+        return float(mult)
+    return float(_CATEGORY_RANK.get(m.get("category", ""), 1))
+
+
 def free_model_ids() -> list[str]:
-    """Multiplier-0 models from the cache (or fallback). Vision-capable first."""
+    """The cheapest tier available on this seat. Vision-capable first.
+
+    Kept under the old name for call-site compatibility. "Free" is no longer
+    literally true on usage-based seats — it now means the lightweight tier.
+    """
     models = cached_models()
-    free = [m for m in models if m["multiplier"] == 0]
-    free.sort(key=lambda m: (not m["vision"], m["id"]))   # vision first, then alpha
-    return [m["id"] for m in free]
+    if not models:
+        return []
+    cheapest = min(_cost_rank(m) for m in models)
+    cheap = [m for m in models if _cost_rank(m) == cheapest]
+    cheap.sort(key=lambda m: (not m["vision"], m["id"]))   # vision first, then alpha
+    return [m["id"] for m in cheap]
 
 
 def pick_default_free_model() -> str:
-    """Best free model for Clicky — vision-capable, multiplier 0."""
+    """Best low-cost model for Clicky — vision-capable and cheapest tier."""
     models = cached_models()
-    # Vision-capable AND free → ideal (Clicky sends screenshots)
-    for m in models:
-        if m["vision"] and m["multiplier"] == 0:
-            return m["id"]
-    # Free-but-no-vision → still usable (ignores the screenshot)
-    for m in models:
-        if m["multiplier"] == 0:
-            return m["id"]
-    # Should never happen, but don't crash
-    return FALLBACK_MODEL
+    if not models:
+        return FALLBACK_MODEL
+    # Clicky sends screenshots, so vision beats cost.
+    vision = [m for m in models if m["vision"]]
+    pool = vision or models
+    return min(pool, key=lambda m: (_cost_rank(m), m["id"]))["id"]
 
 
 def model_label(model_id: str) -> str:
-    """Pretty UI label: 'gpt-4o-mini  (free)' or 'claude-3.5-sonnet  (1×)'."""
+    """Pretty UI label: 'gpt-5-mini  (lightweight)' or 'gpt-4o  (1× premium)'."""
     for m in cached_models():
         if m["id"] == model_id:
-            mult = m["multiplier"]
-            tag = "free" if mult == 0 else (
-                f"{mult:g}×" if mult != 1 else "1× premium"
-            )
+            mult = m.get("multiplier")
+            if mult is None:
+                tag = m.get("category") or "chat"
+            elif mult == 0:
+                tag = "free"
+            elif mult == 1:
+                tag = "1× premium"
+            else:
+                tag = f"{mult:g}×"
             return f"{model_id}  ({tag})"
     return model_id
 
 
 def sorted_model_ids() -> list[str]:
-    """All Copilot model IDs, free ones first, then by ascending multiplier."""
-    models = cached_models()
-    models = sorted(models, key=lambda m: (m["multiplier"], not m["vision"], m["id"]))
+    """All Copilot model IDs, cheapest first, vision-capable ahead of blind."""
+    models = sorted(
+        cached_models(),
+        key=lambda m: (_cost_rank(m), not m["vision"], m["id"]),
+    )
     return [m["id"] for m in models]
 
 

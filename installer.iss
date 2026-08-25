@@ -12,7 +12,7 @@
 ; ────────────────────────────────────────────────────────────────────
 
 #define MyAppName        "Clicky"
-#define MyAppVersion     "1.2.0"
+#define MyAppVersion     "1.3.0"
 #define MyAppPublisher   "Shashank Singh"
 #define MyAppURL         "https://github.com/Bitshank-2338/clicky-windows"
 #define MyAppExeName     "Clicky.exe"
@@ -48,7 +48,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon";  Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 Name: "startupicon";  Description: "Launch Clicky when Windows &starts";  GroupDescription: "Additional shortcuts:"; Flags: unchecked
-Name: "installollama"; Description: "Also download && install Ollama (free local AI engine, ~700 MB) — needed for the no-API-key mode"; GroupDescription: "Free AI engine:"
+; Only offered when Ollama isn't already on the machine. Previously this task
+; was checked by default with no detection at all, so every install spent
+; 12-15 minutes re-downloading and re-running OllamaSetup.exe over a perfectly
+; good existing installation.
+Name: "installollama"; Description: "Also download && install Ollama (free local AI engine, ~700 MB) — needed for the no-API-key mode"; GroupDescription: "Free AI engine:"; Check: not OllamaPresent
 
 [Files]
 ; Everything PyInstaller produced
@@ -74,17 +78,46 @@ Filename: "powershell.exe"; \
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  OllamaChecked: Boolean;
+  OllamaFound: Boolean;
+
+function OllamaPresent: Boolean;
+begin
+  { Cached — Inno calls Check functions repeatedly while drawing the page. }
+  if not OllamaChecked then
+  begin
+    OllamaFound :=
+      FileExists(ExpandConstant('{localappdata}\Programs\Ollama\ollama.exe')) or
+      FileExists(ExpandConstant('{commonpf}\Ollama\ollama.exe')) or
+      FileExists(ExpandConstant('{commonpf64}\Ollama\ollama.exe'));
+    OllamaChecked := True;
+  end;
+  Result := OllamaFound;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    MsgBox(
-      'Clicky installed successfully!' #13#13
-      'On first launch, Clicky will walk you through downloading the AI models' #13
-      'so it can answer your questions offline (free, no API keys needed).' #13#13
-      'You can also use Claude / OpenAI / Gemini / GitHub Copilot — see' #13
-      '.env.example inside the install folder for the template.',
-      mbInformation, MB_OK
-    );
+    if OllamaPresent then
+      MsgBox(
+        'Clicky installed successfully!' #13#13
+        'Ollama is already installed on this PC, so nothing was downloaded.' #13
+        'Clicky will use it automatically.' #13#13
+        'On first launch you''ll get a short intro and can add an API key for' #13
+        'Claude, OpenAI or Gemini if you''d rather use a cloud model.',
+        mbInformation, MB_OK
+      )
+    else
+      MsgBox(
+        'Clicky installed successfully!' #13#13
+        'On first launch, Clicky will introduce itself and walk you through' #13
+        'setting up a free local AI engine — no API key needed.' #13#13
+        'Prefer Claude, OpenAI or Gemini? You can paste a key straight into' #13
+        'the setup wizard, or later via Tray icon > Setup & Diagnostics >' #13
+        'API Keys.',
+        mbInformation, MB_OK
+      );
   end;
 end;
