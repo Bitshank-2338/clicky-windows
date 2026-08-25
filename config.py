@@ -152,6 +152,33 @@ class Config:
     # easier to hold than a 3-key chord. Override with CLICKY_HOTKEY in .env.
     hotkey: str = field(default_factory=lambda: os.getenv("CLICKY_HOTKEY", "ctrl+win"))
 
+    # Microphone mode:
+    #   "hotkey"  (default) — mic opens only while you're asking something.
+    #             Tap the hotkey and speak; Clicky answers when you stop
+    #             talking. Holding it also works and ends on release.
+    #   "ambient" — legacy always-on mic with "Clicky" wake-word detection.
+    #             Costs a continuous Whisper pass over everything it hears.
+    mic_mode: str = field(default_factory=lambda: (
+        os.getenv("CLICKY_MIC_MODE", "hotkey").strip().lower() or "hotkey"
+    ))
+
+    # How long a tap may last before it counts as a hold. Under this, releasing
+    # the key does NOT stop the recording — silence detection does.
+    tap_max_seconds: float = field(default_factory=lambda: float(
+        os.getenv("CLICKY_TAP_MAX_SECONDS", "0.6") or 0.6
+    ))
+
+    def ambient_mic(self) -> bool:
+        """True when the mic should stay open and scan for the wake word."""
+        return self.mic_mode == "ambient"
+
+    def set_mic_mode(self, mode: str) -> None:
+        """Persisted switch between hotkey-only and always-listening."""
+        mode = "ambient" if mode == "ambient" else "hotkey"
+        self.mic_mode = mode
+        os.environ["CLICKY_MIC_MODE"] = mode
+        self._write_env("CLICKY_MIC_MODE", mode)
+
     def llm_provider(self) -> str:
         """Returns the active LLM provider (runtime override > priority chain).
 

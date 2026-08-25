@@ -12,7 +12,7 @@
 ; ────────────────────────────────────────────────────────────────────
 
 #define MyAppName        "Clicky"
-#define MyAppVersion     "1.3.1"
+#define MyAppVersion     "1.4.0"
 #define MyAppPublisher   "Shashank Singh"
 #define MyAppURL         "https://github.com/Bitshank-2338/clicky-windows"
 #define MyAppExeName     "Clicky.exe"
@@ -66,13 +66,30 @@ Name: "{userstartup}\{#MyAppName}";              Filename: "{app}\{#MyAppExeName
 
 [Run]
 ; Optional: download + run the official Ollama installer when the user opts in.
-; PowerShell does the download (no extra tooling needed); the Ollama installer
-; itself is an Inno Setup wizard so /SILENT works.
+;
+; Deliberately split into two steps. The single-command version used
+; PowerShell's `Start-Process -Wait`, which waits for the target process AND
+; every process it spawned. Ollama's installer leaves `ollama app.exe` and
+; `ollama.exe` running permanently, so that wait could never return — Ollama
+; installed correctly, then Setup sat at a full progress bar reading
+; "Downloading and installing Ollama" until the user killed it.
+;
+; Step 1: PowerShell is only an HTTP client here. It must not launch anything.
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$ErrorActionPreference='Stop'; $url='https://ollama.com/download/OllamaSetup.exe'; $dst=Join-Path $env:TEMP 'OllamaSetup.exe'; Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing; Start-Process -FilePath $dst -ArgumentList '/SILENT' -Wait"""; \
-  StatusMsg: "Downloading and installing Ollama (this can take a few minutes)..."; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '{tmp}\OllamaSetup.exe' -UseBasicParsing"""; \
+  StatusMsg: "Downloading Ollama (~700 MB — this can take a few minutes)..."; \
   Tasks: installollama; \
   Flags: runhidden waituntilterminated
+
+; Step 2: Inno's own waituntilterminated waits on this process only, so the
+; background app Ollama leaves behind cannot wedge Setup. skipifdoesntexist
+; means a failed download degrades to "no Ollama" instead of an error dialog —
+; the first-run wizard can still install it later.
+Filename: "{tmp}\OllamaSetup.exe"; \
+  Parameters: "/SILENT /NORESTART"; \
+  StatusMsg: "Installing Ollama..."; \
+  Tasks: installollama; \
+  Flags: waituntilterminated skipifdoesntexist
 
 ; Offer to launch Clicky after install
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

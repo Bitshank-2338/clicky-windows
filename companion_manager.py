@@ -286,6 +286,14 @@ class CompanionManager(QObject):
         self._current_task: Optional[asyncio.Future] = None
         self._cancel_flag = False
 
+        # Push-to-talk bookkeeping. A capture can be ended either by releasing
+        # the hotkey (hold) or by the silence watchdog (tap) — whichever gets
+        # there first claims it, so an utterance is never processed twice.
+        self._hotkey_pressed_at: float = 0.0
+        self._end_claimed = False
+        self._end_lock = threading.Lock()
+        self._last_rms: float = 0.0
+
         # Per-app memory: { window_title: [Message, ...] }
         self._app_memory: dict[str, List[Message]] = {}
         # Screenshots from the current turn — needed to map the LLM's
@@ -324,6 +332,7 @@ class CompanionManager(QObject):
             on_level=self._handle_level,
             on_wake=self._handle_wake,
             device=cfg.mic_device_index,
+            ambient=cfg.ambient_mic(),
         )
 
         # Background asyncio loop
@@ -499,10 +508,21 @@ class CompanionManager(QObject):
     def on_hotkey_press(self):
         if self._state != AppState.IDLE:
             return
+        self._hotkey_pressed_at = time.monotonic()
         self._begin_capture()
+        # Arm the silence watchdog straight away. If this turns out to be a
+        # hold rather than a tap, on_hotkey_release claims the end first.
+        self._submit(self._auto_stop_on_silence())
 
     def on_hotkey_release(self):
-        if self._state == AppState.LISTENING:
+        if self._state != AppState.LISTENING:
+            return
+        held = time.monotonic() - self._hotkey_pressed_at
+        if held < cfg.tap_max_seconds:
+            # A tap, not a hold: keep listening and let the user finish
+            # speaking. The watchdog ends the capture on silence.
+            return
+        if self._claim_end():
             self._submit(self._end_capture_and_process())
 
     def _handle_wake(self):
@@ -510,9 +530,18 @@ class CompanionManager(QObject):
         if self._state != AppState.IDLE:
             return
         self._begin_capture()
-        self._submit(self._auto_stop_after_pause())
+        self._submit(self._auto_stop_on_silence())
+
+    def _claim_end(self) -> bool:
+        """Exactly one of {hotkey release, silence watchdog} ends a capture."""
+        with self._end_lock:
+            if self._end_claimed:
+                return False
+            self._end_claimed = True
+            return True
 
     def _handle_level(self, rms: float):
+        self._last_rms = rms
         try:
             self.sig_audio_level.emit(rms)
         except Exception:
@@ -521,6 +550,8 @@ class CompanionManager(QObject):
     # ── Capture flow ──────────────────────────────────────────────────────────
 
     def _begin_capture(self):
+        self._end_claimed = False
+        self._last_rms = 0.0
         try:
             self._listener.start_recording()
         except Exception as e:
@@ -533,16 +564,45 @@ class CompanionManager(QObject):
             return
         self._emit_state(AppState.LISTENING)
 
-    async def _auto_stop_after_pause(self):
-        """When triggered by wake word, wait for user to finish speaking."""
-        import time
-        max_total_s = 10.0
+    # End-of-speech tuning. SPEECH_RMS matches the ambient listener's VAD
+    # threshold so both agree on what counts as speech.
+    _SPEECH_RMS        = 0.006
+    _END_SILENCE_S     = 1.1    # quiet for this long after speaking = done
+    _NO_SPEECH_S       = 6.0    # nothing said at all = give up
+    _MAX_UTTERANCE_S   = 45.0   # hard cap so a stuck mic can't record forever
+
+    async def _auto_stop_on_silence(self):
+        """End the capture once the user actually stops talking.
+
+        The previous version just waited a flat 10 seconds, which cut long
+        questions off mid-sentence and made short ones sit there in silence.
+        This watches the live mic level instead: wait for speech to start,
+        then end on a sustained pause.
+        """
         start_t = time.monotonic()
+        speech_started = False
+        silence_from: Optional[float] = None
+
         while self._state == AppState.LISTENING:
-            await asyncio.sleep(0.15)
-            if time.monotonic() - start_t > max_total_s:
+            await asyncio.sleep(0.05)
+            now = time.monotonic()
+
+            if self._last_rms > self._SPEECH_RMS:
+                speech_started = True
+                silence_from = None
+            elif speech_started:
+                if silence_from is None:
+                    silence_from = now
+                elif now - silence_from >= self._END_SILENCE_S:
+                    break
+
+            if not speech_started and now - start_t > self._NO_SPEECH_S:
                 break
-        await self._end_capture_and_process()
+            if now - start_t > self._MAX_UTTERANCE_S:
+                break
+
+        if self._claim_end():
+            await self._end_capture_and_process()
 
     async def _end_capture_and_process(self):
         try:
@@ -1355,6 +1415,7 @@ class CompanionManager(QObject):
             on_level=self._handle_level,
             on_wake=self._handle_wake,
             device=cfg.mic_device_index,
+            ambient=cfg.ambient_mic(),
         )
         try:
             self._listener.start()
@@ -1385,7 +1446,15 @@ class CompanionManager(QObject):
         self._web_search_enabled = enabled
 
     def set_wake_word(self, enabled: bool):
+        """Tray toggle — switches between always-listening and hotkey-only.
+
+        ON keeps the mic open and runs a Whisper pass over everything it hears
+        to catch "Clicky". OFF (the default) leaves the mic closed until you
+        press the hotkey, which is both quieter on CPU and less invasive.
+        """
+        cfg.set_mic_mode("ambient" if enabled else "hotkey")
         self._listener.set_wake_word_enabled(enabled)
+        self._listener.set_ambient(enabled)
 
     def set_slow_mode(self, enabled: bool):
         self._slow_mode = enabled

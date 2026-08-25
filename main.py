@@ -431,9 +431,13 @@ def main():
     manager.start()        # begin ambient mic + wake-word scanning
 
     providers = cfg.describe()
+    _hk = "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
     tray.show_notification(
         "Clicky is running",
-        f"Say 'Clicky' or hold {cfg.hotkey}  |  LLM: {providers['llm']}",
+        (f"Say 'Clicky' or press {_hk}  |  LLM: {providers['llm']}"
+         if cfg.ambient_mic() else
+         f"Press {_hk}, ask your question, and Clicky answers when you stop "
+         f"talking  |  LLM: {providers['llm']}"),
     )
 
     # ── First-run setup wizard ────────────────────────────────────────────────

@@ -47,8 +47,8 @@ The blue triangle sits **35 px right / 25 px below** your real cursor. When you 
 ## Feature List
 
 ### 🎙️ Voice Activation
-- Hold **Ctrl + Win** to push-to-talk
-- Say **"Clicky"** for hands-free wake word
+- Hold **Ctrl + Win** and speak — or tap it once and talk; Clicky answers when you stop
+- The mic stays closed until you press it. For hands-free, turn on the **"Clicky"** wake word from the tray
 - Press **Esc** to stop any response or TTS mid-stream
 
 ### 👁️ Screen Aware

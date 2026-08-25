@@ -73,10 +73,12 @@ class TrayManager(QObject):
         self._tray = QSystemTrayIcon()
         self._tray.setIcon(self._icons["idle"])
         self._tray.setToolTip(
-            f"Clicky - AI Companion\nHold {cfg.hotkey} to speak"
+            f"Clicky - AI Companion\nPress {cfg.hotkey} and just talk"
         )
         self._search_enabled = True
-        self._wake_enabled = True
+        # Mirrors the persisted mic mode — off by default, so Clicky only
+        # listens while you're actually asking it something.
+        self._wake_enabled = cfg.ambient_mic()
         self._response_language = ""
         try:
             from config import cfg as _cfg
@@ -153,7 +155,8 @@ class TrayManager(QObject):
         self._search_action = search_action
 
         wake_action = menu.addAction(
-            "Wake word 'Clicky': ON" if self._wake_enabled else "Wake word 'Clicky': OFF"
+            "Always listening (wake word): ON" if self._wake_enabled
+            else "Always listening (wake word): OFF — press the hotkey to talk"
         )
         wake_action.setCheckable(True)
         wake_action.setChecked(self._wake_enabled)

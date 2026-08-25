@@ -55,11 +55,16 @@ class AmbientListener:
         on_level: Callable[[float], None],
         on_wake: Callable[[], None],
         device: Optional[int] = None,
+        ambient: bool = True,
     ):
         self._on_level = on_level
         self._on_wake = on_wake
         self._device = device       # None = system default input device
         self._stream_rate = SAMPLE_RATE   # actual rate the stream opens at
+        # ambient=False → the mic stays closed until start_recording(). No
+        # wake-word scanning, no continuous Whisper passes, and no microphone
+        # indicator in the system tray while Clicky is idle.
+        self._ambient = ambient
 
         self._mode: Mode = Mode.STANDBY
         self._stream: Optional[sd.InputStream] = None
@@ -87,9 +92,17 @@ class AmbientListener:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def start(self):
+        """Begin listening. In hotkey mode this arms the listener without
+        actually opening the microphone — that happens in start_recording()."""
         if self._running:
             return
         self._running = True
+        if self._ambient:
+            self._open_stream()
+
+    def _open_stream(self):
+        if self._stream is not None:
+            return
         try:
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
@@ -118,6 +131,9 @@ class AmbientListener:
 
     def stop(self):
         self._running = False
+        self._close_stream()
+
+    def _close_stream(self):
         if self._stream:
             try:
                 self._stream.stop()
@@ -127,9 +143,17 @@ class AmbientListener:
             self._stream = None
 
     def start_recording(self) -> None:
-        """Switch to RECORDING mode; all audio buffered for STT."""
+        """Switch to RECORDING mode; all audio buffered for STT.
+
+        Opens the microphone first when running in hotkey mode. Raises if the
+        device can't be opened so the caller can surface a real error rather
+        than silently recording nothing.
+        """
         self._rec_buffer = []
         self._mode = Mode.RECORDING
+        if not self._running:
+            self._running = True
+        self._open_stream()
 
     def stop_recording(self) -> bytes:
         """Return buffered PCM16 bytes and resume standby."""
@@ -137,10 +161,30 @@ class AmbientListener:
         self._rec_buffer = []
         self._mode = Mode.STANDBY
         self._reset_segment()
+        # Hotkey mode: release the device so the mic indicator goes away and
+        # nothing is being captured between questions.
+        if not self._ambient:
+            self._close_stream()
         return pcm
 
     def set_wake_word_enabled(self, enabled: bool):
         self._wake_word_enabled = enabled
+
+    def set_ambient(self, ambient: bool) -> None:
+        """Switch between always-listening and hotkey-only at runtime."""
+        if ambient == self._ambient:
+            return
+        self._ambient = ambient
+        if not self._running:
+            return
+        if ambient:
+            self._open_stream()
+        elif self._mode != Mode.RECORDING:
+            self._close_stream()
+
+    @property
+    def ambient(self) -> bool:
+        return self._ambient
 
     @property
     def wake_word_enabled(self) -> bool:
