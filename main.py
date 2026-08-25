@@ -7,6 +7,37 @@ import os
 import sys
 from pathlib import Path
 
+
+def _ensure_std_streams() -> None:
+    """Give the process real stdout/stderr before anything tries to write.
+
+    PyInstaller windowed builds (console=False) set both to None. Most code
+    survives that — bare print() tolerates it — but anything calling
+    .write() directly does not. tqdm is the one that matters: huggingface_hub
+    uses it for the download bar when faster-whisper fetches its model on the
+    first transcription, so the very first activation died with
+    "'NoneType' object has no attribute 'write'". The model then never
+    cached, so it failed again on every subsequent attempt, and the toast
+    showed only the bare message with no traceback (GitHub issue #15).
+
+    Runs at import time, ahead of the heavy imports below, so library code
+    that writes while loading is covered too.
+    """
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is not None:
+            continue
+        try:
+            stream = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            continue
+        setattr(sys, name, stream)
+        # Some libraries reach for the __-prefixed originals instead.
+        if getattr(sys, f"__{name}__", None) is None:
+            setattr(sys, f"__{name}__", stream)
+
+
+_ensure_std_streams()
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
@@ -146,9 +177,16 @@ def main():
     manager.sig_draw.connect(overlay.add_shape)
     manager.sig_clear_drawings.connect(overlay.clear_annotations)
 
-    # Errors
+    # Errors. The toast names the log file because it only has room for the
+    # message itself — issue #15 was reported with no traceback simply because
+    # nobody knew a log existed.
+    _log_hint = Path(
+        os.environ.get("LOCALAPPDATA", Path.home())
+    ) / "Clicky" / "clicky.log"
     manager.sig_error.connect(
-        lambda e: tray.show_notification("Clicky error", str(e))
+        lambda e: tray.show_notification(
+            "Clicky error", f"{e}\n\nFull details: {_log_hint}"
+        )
     )
 
     # Panel → Manager

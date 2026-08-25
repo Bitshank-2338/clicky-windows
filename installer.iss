@@ -12,7 +12,7 @@
 ; ────────────────────────────────────────────────────────────────────
 
 #define MyAppName        "Clicky"
-#define MyAppVersion     "1.3.0"
+#define MyAppVersion     "1.3.1"
 #define MyAppPublisher   "Shashank Singh"
 #define MyAppURL         "https://github.com/Bitshank-2338/clicky-windows"
 #define MyAppExeName     "Clicky.exe"

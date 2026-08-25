@@ -910,6 +910,12 @@ class CompanionManager(QObject):
                 pass
 
         except Exception as e:
+            # Log the traceback, not just the message. The toast shows one
+            # line, so discarding the stack here left bug reporters with
+            # nothing to go on — issue #15 was reported as a bare
+            # "'NoneType' object has no attribute 'write'" with no way to
+            # tell which call produced it.
+            _log.exception("request failed: %s", e)
             self.sig_error.emit(str(e))
 
         finally:
