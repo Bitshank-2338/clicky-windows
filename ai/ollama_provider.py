@@ -1,4 +1,5 @@
 import base64
+import os
 from typing import AsyncIterator, List
 
 import httpx
@@ -59,7 +60,13 @@ class OllamaProvider(BaseLLMProvider):
             "model": chosen,
             "messages": messages,
             "stream": True,
-            "options": {"num_predict": 1024},
+            "options": {
+                "num_predict": 1024,
+                # Ollama 0.33 defaults to a 65536 context; its KV cache
+                # overflows an 8GB card and spills ~35% of the model onto
+                # the CPU. 8192 keeps a 7B vision model 100% on the GPU.
+                "num_ctx": int(os.getenv("CLICKY_OLLAMA_NUM_CTX", "8192")),
+            },
         }
 
         async with httpx.AsyncClient(timeout=120) as client:
