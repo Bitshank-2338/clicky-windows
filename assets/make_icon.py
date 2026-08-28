@@ -53,11 +53,16 @@ def main():
     sizes = [16, 24, 32, 48, 64, 128, 256]
     frames = [make_frame(s) for s in sizes]
     # Pillow writes multi-resolution .ico when sizes= is passed
-    frames[0].save(
+    # Save from the LARGEST frame. Pillow's ICO writer only ever downscales
+    # from the base image, so basing this on frames[0] (16px) silently threw
+    # away every larger size and produced a 16x16-only .ico that Windows then
+    # upscaled into a blur. append_images keeps the purpose-drawn small frames
+    # instead of letting Pillow downsample them.
+    frames[-1].save(
         OUT,
         format="ICO",
         sizes=[(s, s) for s in sizes],
-        append_images=frames[1:],
+        append_images=frames[:-1],
     )
     print(f"Wrote {OUT} ({len(sizes)} sizes)")
 
