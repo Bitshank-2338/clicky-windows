@@ -34,6 +34,7 @@ _LANG_VOICE = {
     "te": ("Telugu",    "te-IN-ShrutiNeural"),
     "bn": ("Bengali",   "bn-IN-TanishaaNeural"),
     "ur": ("Urdu",      "ur-PK-UzmaNeural"),
+    "el": ("Greek",     "el-GR-AthinaNeural"),
 }
 
 
@@ -47,6 +48,7 @@ def _script_heuristic(text: str) -> str:
     if re.search(r"[一-鿿]", text):    return "zh"   # Han
     if re.search(r"[぀-ヿ]", text):    return "ja"   # Hiragana/Katakana
     if re.search(r"[가-힯]", text):    return "ko"   # Hangul
+    if re.search("[Ͱ-Ͽἀ-῿]", text): return "el"   # Greek
     if re.search(r"[Ѐ-ӿ]", text):    return "ru"   # Cyrillic
     return "en"
 
