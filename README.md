@@ -299,12 +299,12 @@ A blue dot appears in your system tray. Clicky is now running.
 No API keys at all — uses local AI, local STT, free TTS:
 
 ```env
-OLLAMA_VISION_MODEL=qwen2-vl:7b
+OLLAMA_VISION_MODEL=qwen2.5vl:7b
 OLLAMA_TEXT_MODEL=qwen2.5-coder:7b
 ```
 
 1. Install [Ollama](https://ollama.ai) → run `ollama serve` (or install [LM Studio](https://lmstudio.ai) and start its local server instead)
-2. Pull models: `ollama pull qwen2-vl:7b && ollama pull qwen2.5-coder:7b`
+2. Pull models: `ollama pull qwen2.5vl:7b && ollama pull qwen2.5-coder:7b`
 3. `pip install -r requirements.txt`
 4. `python main.py`
 
@@ -314,7 +314,7 @@ Clicky uses **two Ollama model slots**: a vision model for screen-aware question
 
 | Slot | Model | Size | Good for |
 |---|---|---|---|
-| Vision | `qwen2-vl:7b` | 5 GB | Screen reading, pointing — best quality |
+| Vision | `qwen2.5vl:7b` | 5 GB | Screen reading, pointing — best quality |
 | Vision | `llama3.2-vision:11b` | 8 GB | Alternative vision model |
 | Vision | `llava:7b` | 4 GB | Fastest option |
 | Text | `qwen2.5-coder:7b` | 4 GB | Code questions — excellent |
