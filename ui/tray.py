@@ -57,6 +57,7 @@ class TrayManager(QObject):
     on_diagnostics        = pyqtSignal()
     on_set_mic_device     = pyqtSignal(int)     # sounddevice input device index
     on_set_response_language = pyqtSignal(str)  # "" = auto-detect, else ISO code
+    on_set_stt_language      = pyqtSignal(str)  # "" = auto-detect, else ISO code
     on_set_custom_instructions = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -273,6 +274,7 @@ class TrayManager(QObject):
         # ── Setup / Diagnostics ──
         setup_menu = menu.addMenu("Setup && Diagnostics")
         self._build_mic_submenu(setup_menu)
+        self._build_stt_language_submenu(setup_menu)
         keys_act = setup_menu.addAction("API Keys…")
         keys_act.triggered.connect(self.on_api_keys)
         run_setup = setup_menu.addAction("Run setup wizard again…")
@@ -355,6 +357,33 @@ class TrayManager(QObject):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._custom_instructions = editor.toPlainText().strip()
             self.on_set_custom_instructions.emit(self._custom_instructions)
+
+    def _build_stt_language_submenu(self, parent_menu: QMenu):
+        """Pin the speech-recognition language.
+
+        Separate from the reply language: this one controls what Whisper
+        assumes it is hearing. Auto-detect re-decides every utterance, which is
+        what makes code-mixed speech (Hinglish) transcribe inconsistently.
+        """
+        from tutor_features.multilang import _LANG_VOICE
+
+        current = getattr(self, "_stt_language", "")
+        label = _LANG_VOICE.get(current, ("Auto-detect",))[0] if current else "Auto-detect"
+        menu = parent_menu.addMenu(f"Speech recognition: {label}")
+
+        auto_act = menu.addAction("Auto-detect")
+        auto_act.setCheckable(True)
+        auto_act.setChecked(current == "")
+        auto_act.triggered.connect(lambda: self.on_set_stt_language.emit(""))
+
+        menu.addSeparator()
+        for code, (name, _voice) in _LANG_VOICE.items():
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(current == code)
+            act.triggered.connect(
+                lambda _=False, c=code: self.on_set_stt_language.emit(c)
+            )
 
     def _build_language_submenu(self, parent_menu: QMenu):
         """Lets the user pin Clicky's reply language instead of relying on

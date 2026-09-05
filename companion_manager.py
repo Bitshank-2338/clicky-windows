@@ -292,6 +292,26 @@ class CompanionManager(QObject):
         self._hotkey_pressed_at: float = 0.0
         self._end_claimed = False
         self._end_lock = threading.Lock()
+        # Starting a capture needs the same mutual exclusion as ending one.
+        # The hotkey runs on the keyboard-hook thread and the wake word on the
+        # sounddevice callback thread; both used to test `_state == IDLE` and
+        # then call _begin_capture(), which only set LISTENING afterwards. Two
+        # threads could pass that test on the same utterance and open two
+        # captures, producing two LLM calls and two TTS streams playing over
+        # each other with no gap between them.
+        self._begin_lock = threading.Lock()
+
+        # "next" / "repeat" are one or two words. Anything longer than this
+        # was a real question that Whisper mangled, not a command.
+        self._MAX_COMMAND_SECONDS = 2.5
+        # Auto-detect stays on, but the reply voice only follows it once the
+        # same language has been seen twice running. Romanised Hinglish makes
+        # langdetect return a different answer almost every turn, and the
+        # accent was changing mid-conversation as a result.
+        self._voice_lang: str = "en"
+        self._pending_lang: str = ""
+        self._applied_voice_lang: str = "en"
+
         self._last_rms: float = 0.0
 
         # Per-app memory: { window_title: [Message, ...] }
@@ -506,7 +526,7 @@ class CompanionManager(QObject):
     # ── Input sources ─────────────────────────────────────────────────────────
 
     def on_hotkey_press(self):
-        if self._state != AppState.IDLE:
+        if not self._claim_begin():
             return
         self._hotkey_pressed_at = time.monotonic()
         self._begin_capture()
@@ -527,10 +547,22 @@ class CompanionManager(QObject):
 
     def _handle_wake(self):
         """Triggered from ambient listener when wake-word is detected."""
-        if self._state != AppState.IDLE:
+        if not self._claim_begin():
             return
         self._begin_capture()
         self._submit(self._auto_stop_on_silence())
+
+    def _claim_begin(self) -> bool:
+        """Exactly one of {hotkey press, wake word} may open a capture.
+
+        Sets LISTENING inside the lock so a second caller on another thread
+        cannot also observe IDLE and start a parallel capture.
+        """
+        with self._begin_lock:
+            if self._state != AppState.IDLE:
+                return False
+            self._state = AppState.LISTENING
+            return True
 
     def _claim_end(self) -> bool:
         """Exactly one of {hotkey release, silence watchdog} ends a capture."""
@@ -552,6 +584,14 @@ class CompanionManager(QObject):
     def _begin_capture(self):
         self._end_claimed = False
         self._last_rms = 0.0
+        # Silence anything still playing from the previous turn. Without this
+        # a leftover TTS stream keeps going while the next answer starts, and
+        # the two are heard on top of one another.
+        try:
+            from audio.playback import stop_audio
+            stop_audio()
+        except Exception:
+            pass
         try:
             self._listener.start_recording()
         except Exception as e:
@@ -617,6 +657,9 @@ class CompanionManager(QObject):
             self._emit_state(AppState.IDLE)
             return
 
+        # 32000 bytes == 1s of 16 kHz mono int16.
+        audio_seconds = len(pcm) / 32000.0
+
         self._emit_state(AppState.THINKING)
         pointing_held = False  # track whether we told overlay to hold dwell
 
@@ -640,12 +683,25 @@ class CompanionManager(QObject):
             title = active_window_title()
             ak = app_key(title)
 
-            if is_next(transcript) and self._lesson_steps:
+            # Voice commands are one or two words, so they cannot come from a
+            # long recording. Whisper degrades to a short generic phrase
+            # ("Continue.", "Repeat.") on unclear or code-mixed speech, and
+            # without this length check a mis-transcribed sentence silently
+            # replayed the previous answer instead of being asked.
+            command_plausible = audio_seconds <= self._MAX_COMMAND_SECONDS
+            if not command_plausible and (is_next(transcript) or is_repeat(transcript)):
+                _log.info(
+                    "ignoring %r as a voice command — %.1fs of audio is too "
+                    "long for one; treating it as a question",
+                    transcript[:40], audio_seconds,
+                )
+
+            if command_plausible and is_next(transcript) and self._lesson_steps:
                 await self._advance_lesson_step(ak)
                 return
 
             # "say it again" — replay the last response without a new LLM call
-            if is_repeat(transcript) and self._last_response:
+            if command_plausible and is_repeat(transcript) and self._last_response:
                 self.sig_response_chunk.emit(self._last_response)
                 self.sig_response_done.emit(self._last_response)
                 self._emit_state(AppState.SPEAKING)
@@ -956,11 +1012,15 @@ class CompanionManager(QObject):
             # to match the user's language for multilingual mode.
             if self._cancel_flag:
                 return
-            if self._multilang and lang_code != "en":
+            if self._multilang:
                 try:
-                    tts = self._get_tts()
-                    if hasattr(tts, "set_voice"):
-                        tts.set_voice(multilang.voice_for(lang_code))
+                    stable = self._stable_voice_language(lang_code)
+                    if stable != self._applied_voice_lang:
+                        tts = self._get_tts()
+                        if hasattr(tts, "set_voice"):
+                            tts.set_voice(multilang.voice_for(stable))
+                            self._applied_voice_lang = stable
+                            _log.info("reply voice switched to %r", stable)
                 except Exception:
                     pass
             self._emit_state(AppState.SPEAKING)
@@ -1301,6 +1361,25 @@ class CompanionManager(QObject):
             if remaining > 0:
                 await asyncio.sleep(min(remaining, 4.0) + 0.1)
 
+    def _stable_voice_language(self, detected: str) -> str:
+        """Debounce language detection before it is allowed to change the voice.
+
+        A pinned reply language always wins. Otherwise a new language has to
+        show up twice in a row to take effect, so a single misdetection — very
+        common on code-mixed speech like Hinglish — no longer swaps the accent
+        for one answer and swaps it back on the next.
+        """
+        if cfg.response_language:
+            return cfg.response_language
+        if detected == self._voice_lang:
+            self._pending_lang = ""
+        elif self._pending_lang == detected:
+            self._voice_lang = detected   # seen twice running — adopt it
+            self._pending_lang = ""
+        else:
+            self._pending_lang = detected  # first sighting — hold the voice
+        return self._voice_lang
+
     def _emit_state(self, state: AppState):
         self._state = state
         self.sig_state_changed.emit(state)
@@ -1390,6 +1469,27 @@ class CompanionManager(QObject):
             set_key(str(env_path), "CUSTOM_INSTRUCTIONS", escaped)
         except Exception as e:
             self.sig_error.emit(f"Could not save instructions: {e}")
+
+    def set_stt_language(self, code: str):
+        """Pin the language Whisper transcribes in. "" = auto-detect.
+
+        Auto-detect re-decides on every single utterance, which is unreliable
+        for code-mixed speech: Hinglish flips between Hindi and English turn to
+        turn, and the transcript quality swings with it. Pinning one language
+        makes transcription consistent.
+        """
+        code = (code or "").strip()
+        cfg.whisper_language = code
+        try:
+            from dotenv import set_key
+            env_path = cfg.env_path()
+            if not env_path.exists():
+                env_path.touch()
+            set_key(str(env_path), "WHISPER_LANGUAGE", code)
+        except Exception:
+            pass
+        # Drop the cached model so the next transcription picks the new setting
+        self._stt = None
 
     def set_response_language(self, code: str):
         """Tray callback — pin Clicky's reply language ('' = auto-detect)."""
