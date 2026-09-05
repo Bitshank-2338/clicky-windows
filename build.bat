@@ -38,11 +38,12 @@ if errorlevel 1 (
     python -m pip install --quiet -r requirements.txt
 )
 
-REM ── 2b. Generate icon if missing ───────────────────────────────────
-if not exist "assets\icon.ico" (
-    echo     Generating default icon...
-    python "assets\make_icon.py"
-)
+REM ── 2b. Generate icon ──────────────────────────────────────────────
+REM Always regenerate. The old "if not exist" guard meant a stale icon.ico
+REM committed to the repo was never rebuilt, so the fix to make_icon.py had
+REM no effect on shipped builds — the 16x16-only icon kept going out.
+echo     Generating icon...
+python "assets\make_icon.py"
 
 REM ── 3. Clean old build ─────────────────────────────────────────────
 echo [2/4] Cleaning old build...
