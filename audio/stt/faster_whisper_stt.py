@@ -28,7 +28,7 @@ class FasterWhisperSTT(BaseSTT):
     async def transcribe(self, pcm_bytes: bytes, sample_rate: int = 16000) -> str:
         pcm_bytes = trim_silence(pcm_bytes)
         wav_bytes = pcm16_to_wav(pcm_bytes, sample_rate)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._run, wav_bytes)
 
     def _run(self, wav_bytes: bytes) -> str:
