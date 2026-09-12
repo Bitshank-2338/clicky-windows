@@ -8,6 +8,56 @@ from ai.ollama_models_registry import is_vision_capable
 from config import cfg
 
 
+# Model architectures current Ollama builds can no longer load. Pulling one
+# succeeds, so `ollama list` shows it as installed, and it only fails at the
+# moment a request tries to load it — as an opaque HTTP 500.
+_DEAD_ARCHITECTURES = ("mllama",)
+
+
+def _explain_ollama_error(status: int, body: str, model: str, had_images: bool) -> str:
+    """Turn an Ollama HTTP error into something a user can act on."""
+    low = (body or "").lower()
+
+    # llama3.2-vision and friends are built on 'mllama', dropped by newer
+    # Ollama. The server logs 'unknown model architecture', llama-server dies,
+    # and the client only sees a bare HTTP 500.
+    if any(a in low for a in _DEAD_ARCHITECTURES) or "unknown model architecture" in low:
+        return (
+            "'{m}' cannot be loaded by your version of Ollama. Its model "
+            "architecture was dropped in a newer Ollama release, so it fails "
+            "even though `ollama list` still shows it installed.\n\n"
+            "Switch to a supported vision model:\n"
+            "    ollama pull qwen2.5vl:3b\n\n"
+            "then choose it under Tray -> Ollama -> Vision model."
+        ).format(m=model)
+
+    # Sending images to a text-only model: Ollama answers 400 with this text.
+    if "does not support multimodal" in low or "multimodal data provided" in low:
+        return (
+            "'{m}' is a text-only model, but Clicky sends a screenshot with "
+            "every question.\n\n"
+            "Choose a vision model under Tray -> Ollama -> Vision model, or "
+            "pull one:\n"
+            "    ollama pull qwen2.5vl:3b"
+        ).format(m=model)
+
+    if "out of memory" in low or "insufficient memory" in low:
+        return (
+            "Ollama ran out of memory loading '{m}'. Try a smaller model "
+            "(qwen2.5vl:3b needs about 3 GB) or close other applications."
+        ).format(m=model)
+
+    snippet = (body or "").strip()[:300] or "(no detail returned)"
+    hint = (
+        "\n\nThis request included a screenshot. If the model is text-only, "
+        "choose a vision model under Tray -> Ollama."
+        if had_images else ""
+    )
+    return "Ollama returned HTTP {s} for '{m}': {b}{h}".format(
+        s=status, m=model, b=snippet, h=hint
+    )
+
+
 class OllamaProvider(BaseLLMProvider):
     """
     Streams responses from a local Ollama instance.
@@ -76,7 +126,19 @@ class OllamaProvider(BaseLLMProvider):
                         f"Run `ollama pull {chosen}` or pick another model "
                         f"from Tray → Ollama."
                     )
-                response.raise_for_status()
+
+                if response.status_code >= 400:
+                    # Anything not handled above used to fall through to
+                    # raise_for_status(), which surfaces httpx's own text —
+                    # "Server error '500 Internal Server Error' for url ..."
+                    # plus a link to MDN. That told users nothing about which
+                    # model failed or what to do, and Ollama's own explanation
+                    # in the response body was thrown away.
+                    body = (await response.aread()).decode("utf-8", "replace")
+                    raise RuntimeError(_explain_ollama_error(
+                        response.status_code, body, chosen, bool(screenshots_b64)
+                    ))
+
                 import json
                 async for line in response.aiter_lines():
                     if not line.strip():

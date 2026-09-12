@@ -4,7 +4,7 @@
 
 - Python 3.11+
 - Ollama installed (https://ollama.com) â€” for student/free mode
-- `llama3.2-vision` model pulled: `ollama pull llama3.2-vision`
+- A vision model pulled: `ollama pull qwen2.5vl:3b`
 
 ## Install
 

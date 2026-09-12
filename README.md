@@ -268,7 +268,7 @@ TAVILY_API_KEY=...
 
 # ── Ollama (local AI) ──
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=llama3.2-vision
+OLLAMA_MODEL=qwen2.5vl:3b
 
 # ── LM Studio (local AI, OpenAI-compatible server) ──
 LMSTUDIO_HOST=http://localhost:1234/v1
@@ -315,7 +315,7 @@ Clicky uses **two Ollama model slots**: a vision model for screen-aware question
 | Slot | Model | Size | Good for |
 |---|---|---|---|
 | Vision | `qwen2.5vl:7b` | 5 GB | Screen reading, pointing — best quality |
-| Vision | `llama3.2-vision:11b` | 8 GB | Alternative vision model |
+| Vision | `llava:7b` | 4 GB | Alternative vision model |
 | Vision | `llava:7b` | 4 GB | Fastest option |
 | Text | `qwen2.5-coder:7b` | 4 GB | Code questions — excellent |
 | Text | `llama3.2:3b` | 2 GB | Tiny, fits any GPU |
@@ -528,7 +528,7 @@ clicky-windows/
 | `ELEVENLABS_VOICE_ID` | — | Your ElevenLabs voice clone ID |
 | `TAVILY_API_KEY` | — | Tavily search (upgrades DuckDuckGo) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2-vision` | Legacy single-model fallback |
+| `OLLAMA_MODEL` | `qwen2.5vl:3b` | Legacy single-model fallback |
 | `OLLAMA_VISION_MODEL` | *(empty)* | Ollama model for screen-aware tasks (pointing, describe screen) |
 | `OLLAMA_TEXT_MODEL` | *(empty)* | Ollama model for Code Mode + journal Q&A |
 | `LMSTUDIO_HOST` | `http://localhost:1234/v1` | LM Studio local server URL |
@@ -558,7 +558,7 @@ clicky-windows/
 
 **"Thinking…" forever with Ollama**
 → Run `ollama serve` in a terminal first
-→ Run `ollama pull llama3.2-vision` to download the model
+→ Run `ollama pull qwen2.5vl:3b` to download the model
 → Press Esc to cancel
 
 **"Thinking…" forever with LM Studio**

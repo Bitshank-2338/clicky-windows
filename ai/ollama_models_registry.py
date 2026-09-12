@@ -27,18 +27,21 @@ class OllamaRec:
 
 RECOMMENDED_VISION: list[OllamaRec] = [
     OllamaRec(
-        name="qwen2-vl:7b",
-        label="Qwen2-VL 7B",
-        size="4.5 GB",
+        name="qwen2.5vl:7b",
+        label="Qwen2.5-VL 7B",
+        size="6 GB",
         use_for="vision",
         blurb="Best UI/OCR accuracy — recommended for pointing",
     ),
     OllamaRec(
-        name="llama3.2-vision:11b",
-        label="Llama 3.2 Vision 11B",
-        size="7.9 GB",
+        # Replaces llama3.2-vision:11b, which still pulls but no longer loads:
+        # newer Ollama dropped its 'mllama' architecture, so selecting it made
+        # every screen-aware question fail with an opaque HTTP 500.
+        name="qwen2.5vl:3b",
+        label="Qwen2.5-VL 3B",
+        size="3 GB",
         use_for="vision",
-        blurb="Meta's flagship vision model — solid all-rounder",
+        blurb="Small and fast — the default, good on 8 GB machines",
     ),
     OllamaRec(
         name="llava:7b",

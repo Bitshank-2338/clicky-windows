@@ -110,11 +110,17 @@ class Config:
     ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     # Legacy single-model knob — still respected as a fallback for both slots
     # below. New users should prefer OLLAMA_VISION_MODEL / OLLAMA_TEXT_MODEL.
-    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.2-vision"))
+    # Default was "llama3.2-vision" until it stopped loading: it is built on
+    # the 'mllama' architecture, which newer Ollama releases dropped. `ollama
+    # pull` still succeeds and `ollama list` still shows it, so it looked
+    # installed and correct — then every screen-aware question came back as an
+    # opaque HTTP 500 from /api/chat. qwen2.5vl:3b is what the setup wizard
+    # already pulls, so this also makes the two agree.
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b"))
     # Two-slot model selection: vision = screen-aware queries, text = Code Mode
     # / journal Q&A / no-screenshot replies. Either can be overridden at runtime
     # via cfg.set_ollama_model("vision"|"text", name).
-    ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "llama3.2-vision"))
+    ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b"))
     ollama_text_model:   str = field(default_factory=lambda: os.getenv("OLLAMA_TEXT_MODEL", "") or "llama3.2:3b")
 
     # LM Studio — local OpenAI-compatible server (Developer tab → Start Server).
