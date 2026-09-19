@@ -74,6 +74,14 @@ class OllamaProvider(BaseLLMProvider):
         self._base = cfg.ollama_host.rstrip("/")
         # Kept for backward compat with old code paths reading self._model
         self._model = cfg.ollama_model
+        self._client = httpx.AsyncClient(
+            timeout=120,
+            limits=httpx.Limits(max_keepalive_connections=4, max_connections=8)
+        )
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client session."""
+        await self._client.aclose()
 
     def _pick_model(self, has_screenshots: bool) -> str:
         return cfg.get_ollama_model("vision" if has_screenshots else "text")
@@ -105,71 +113,78 @@ class OllamaProvider(BaseLLMProvider):
             user_msg["images"] = screenshots_b64
         messages.append(user_msg)
 
+        options: dict = {
+            "num_predict": 1024,
+            "num_gpu": cfg.ollama_num_gpu,
+            "num_ctx": cfg.ollama_num_ctx,
+        }
+        if cfg.ollama_num_thread is not None:
+            options["num_thread"] = cfg.ollama_num_thread
+
         payload = {
             "model": chosen,
             "messages": messages,
             "stream": True,
-            "options": {"num_predict": 1024},
+            "keep_alive": cfg.ollama_keep_alive,
+            "options": options,
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            async with client.stream(
-                "POST",
-                f"{self._base}/api/chat",
-                json=payload,
-            ) as response:
-                if response.status_code == 404:
-                    # Surface a useful error when the chosen model isn't
-                    # installed locally — students hit this constantly.
-                    raise RuntimeError(
-                        f"Ollama doesn't have '{chosen}' installed. "
-                        f"Run `ollama pull {chosen}` or pick another model "
-                        f"from Tray → Ollama."
-                    )
+        async with self._client.stream(
+            "POST",
+            f"{self._base}/api/chat",
+            json=payload,
+        ) as response:
+            if response.status_code == 404:
+                # Surface a useful error when the chosen model isn't
+                # installed locally — students hit this constantly.
+                raise RuntimeError(
+                    f"Ollama doesn't have '{chosen}' installed. "
+                    f"Run `ollama pull {chosen}` or pick another model "
+                    f"from Tray → Ollama."
+                )
 
-                if response.status_code >= 400:
-                    # Anything not handled above used to fall through to
-                    # raise_for_status(), which surfaces httpx's own text —
-                    # "Server error '500 Internal Server Error' for url ..."
-                    # plus a link to MDN. That told users nothing about which
-                    # model failed or what to do, and Ollama's own explanation
-                    # in the response body was thrown away.
-                    body = (await response.aread()).decode("utf-8", "replace")
-                    raise RuntimeError(_explain_ollama_error(
-                        response.status_code, body, chosen, bool(screenshots_b64)
-                    ))
+            if response.status_code >= 400:
+                # Anything not handled above used to fall through to
+                # raise_for_status(), which surfaces httpx's own text —
+                # "Server error '500 Internal Server Error' for url ..."
+                # plus a link to MDN. That told users nothing about which
+                # model failed or what to do, and Ollama's own explanation
+                # in the response body was thrown away.
+                body = (await response.aread()).decode("utf-8", "replace")
+                raise RuntimeError(_explain_ollama_error(
+                    response.status_code, body, chosen, bool(screenshots_b64)
+                ))
 
-                import json
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        chunk = data.get("message", {}).get("content", "")
-                        if chunk:
-                            yield chunk
-                        if data.get("done"):
-                            break
-                    except json.JSONDecodeError:
-                        continue
+            import json
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    chunk = data.get("message", {}).get("content", "")
+                    if chunk:
+                        yield chunk
+                    if data.get("done"):
+                        break
+                except json.JSONDecodeError:
+                    continue
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/api/tags")
-                return r.status_code == 200
+            r = await self._client.get(f"{self._base}/api/tags", timeout=5)
+            return r.status_code == 200
         except Exception:
             return False
 
     async def list_models(self) -> List[str]:
         """Return all installed model names (flat list)."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/api/tags")
-                data = r.json()
-                return [m["name"] for m in data.get("models", [])]
+            r = await self._client.get(f"{self._base}/api/tags", timeout=5)
+            data = r.json()
+            return [m["name"] for m in data.get("models", [])]
         except Exception:
             return []
+
 
     async def list_models_classified(self) -> dict[str, list[str]]:
         """Installed models split into {'vision': [...], 'text': [...]}.

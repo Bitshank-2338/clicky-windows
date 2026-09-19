@@ -123,6 +123,12 @@ class Config:
     ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b"))
     ollama_text_model:   str = field(default_factory=lambda: os.getenv("OLLAMA_TEXT_MODEL", "") or "llama3.2:3b")
 
+    # Ollama performance tuning knobs (keep_alive, GPU offload, thread count, context length)
+    ollama_keep_alive:   str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "10m"))
+    ollama_num_gpu:      int = field(default_factory=lambda: int(os.getenv("OLLAMA_NUM_GPU", "-1")))
+    ollama_num_thread:   Optional[int] = field(default_factory=lambda: int(v) if (v := os.getenv("OLLAMA_NUM_THREAD", "").strip()) else None)
+    ollama_num_ctx:      int = field(default_factory=lambda: int(os.getenv("OLLAMA_NUM_CTX", "4096")))
+
     # LM Studio — local OpenAI-compatible server (Developer tab → Start Server).
     # No key needed. Leave LMSTUDIO_MODEL empty to use whatever's loaded.
     lmstudio_host: str = field(default_factory=lambda: os.getenv("LMSTUDIO_HOST", "http://localhost:1234/v1"))
