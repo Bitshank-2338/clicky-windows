@@ -34,6 +34,14 @@ class LMStudioProvider(BaseLLMProvider):
     def __init__(self):
         self._base = cfg.lmstudio_host.rstrip("/")
         self._model = cfg.lmstudio_model
+        self._client = httpx.AsyncClient(
+            timeout=120,
+            limits=httpx.Limits(max_keepalive_connections=4, max_connections=8)
+        )
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client session."""
+        await self._client.aclose()
 
     async def stream_response(
         self,
@@ -67,53 +75,51 @@ class LMStudioProvider(BaseLLMProvider):
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            try:
-                async with client.stream(
-                    "POST",
-                    f"{self._base}/chat/completions",
-                    json=payload,
-                ) as response:
-                    if response.status_code == 404:
-                        raise RuntimeError(
-                            "LM Studio server not reachable at "
-                            f"{self._base}. Open LM Studio → Developer tab → "
-                            "Start Server, and make sure a model is loaded."
-                        )
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line.strip() or not line.startswith("data:"):
-                            continue
-                        data_str = line[len("data:"):].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            data = json.loads(data_str)
-                            delta = data["choices"][0]["delta"].get("content")
-                            if delta:
-                                yield delta
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
-            except httpx.ConnectError as e:
-                raise RuntimeError(
-                    "Can't reach LM Studio. Is the local server running? "
-                    "(LM Studio → Developer tab → Start Server)"
-                ) from e
+        try:
+            async with self._client.stream(
+                "POST",
+                f"{self._base}/chat/completions",
+                json=payload,
+            ) as response:
+                if response.status_code == 404:
+                    raise RuntimeError(
+                        "LM Studio server not reachable at "
+                        f"{self._base}. Open LM Studio → Developer tab → "
+                        "Start Server, and make sure a model is loaded."
+                    )
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip() or not line.startswith("data:"):
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        delta = data["choices"][0]["delta"].get("content")
+                        if delta:
+                            yield delta
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+        except httpx.ConnectError as e:
+            raise RuntimeError(
+                "Can't reach LM Studio. Is the local server running? "
+                "(LM Studio → Developer tab → Start Server)"
+            ) from e
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/models")
-                return r.status_code == 200
+            r = await self._client.get(f"{self._base}/models", timeout=5)
+            return r.status_code == 200
         except Exception:
             return False
 
     async def list_models(self) -> List[str]:
         """Return model ids LM Studio currently reports via /v1/models."""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{self._base}/models")
-                data = r.json()
-                return [m["id"] for m in data.get("data", [])]
+            r = await self._client.get(f"{self._base}/models", timeout=5)
+            data = r.json()
+            return [m["id"] for m in data.get("data", [])]
         except Exception:
             return []
+
