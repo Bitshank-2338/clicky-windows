@@ -390,6 +390,18 @@ class CompanionManager(QObject):
         except Exception:
             pass
         self._listener.stop()
+        # Close the provider's HTTP pool while the loop is still alive —
+        # once it stops, the coroutine can never run. Bounded so a hung
+        # socket cannot delay quitting.
+        closer = getattr(self._llm, "close", None)
+        if callable(closer) and self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._llm.close(), self._loop
+                ).result(timeout=3)
+            except Exception:
+                _log.debug("closing provider on shutdown failed", exc_info=True)
+        self._llm = None
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
 
@@ -460,6 +472,40 @@ class CompanionManager(QObject):
                 except Exception:
                     pass
         fut.add_done_callback(_observe)
+
+    def _retire_llm(self) -> None:
+        """Drop the active provider and close its pooled HTTP client.
+
+        Providers now keep a persistent httpx.AsyncClient (up to 8 pooled
+        connections). Setting self._llm = None only drops the reference, so
+        the pool stayed open until garbage collection got round to it.
+
+        The close is deferred until nothing is being generated: aclose() tears
+        down the connection pool, so running it mid-stream would abort the
+        answer the user is currently listening to. Scheduled directly rather
+        than through _submit(), which reports failures to the user and forces
+        the UI back to idle — neither is wanted for background cleanup.
+        """
+        old, self._llm = self._llm, None
+        closer = getattr(old, "close", None)
+        if old is None or not callable(closer):
+            return
+        if not self._loop or not self._loop.is_running():
+            return
+
+        async def _close_when_idle():
+            deadline = time.monotonic() + 30
+            while self._state != AppState.IDLE and time.monotonic() < deadline:
+                await asyncio.sleep(0.2)
+            try:
+                await old.close()
+            except Exception:
+                _log.debug("closing retired provider failed", exc_info=True)
+
+        try:
+            asyncio.run_coroutine_threadsafe(_close_when_idle(), self._loop)
+        except Exception:
+            pass
 
     # ── Provider lazy init ────────────────────────────────────────────────────
 
@@ -1392,7 +1438,7 @@ class CompanionManager(QObject):
     def set_active_provider(self, name: str):
         """Runtime switch between claude / openai / copilot / gemini / ollama."""
         cfg.set_active_llm(name)
-        self._llm = None           # force re-init on next query
+        self._retire_llm()         # force re-init on next query, close old pool
         self._current_model = None
         # If switching to Copilot and the cached model list is stale (or
         # missing), refresh it in the background so the panel shows the
@@ -1454,7 +1500,7 @@ class CompanionManager(QObject):
         cfg.set_ollama_model(kind, name)
         # Force the provider instance to re-read cfg on next call
         if cfg.llm_provider() == "ollama":
-            self._llm = None
+            self._retire_llm()
 
     def set_custom_instructions(self, text: str):
         """Tray callback — restrict/steer what Clicky helps with. Persists
