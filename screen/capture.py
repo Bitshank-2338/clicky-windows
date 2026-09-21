@@ -21,6 +21,7 @@ import io
 from dataclasses import dataclass
 from typing import List
 
+import os
 import mss
 import mss.tools
 from PIL import Image
@@ -65,14 +66,17 @@ def _query_dpi_scale() -> float:
         return 1.0
 
 
-def capture_all_screens(max_width: int = 1280) -> List[ScreenShot]:
+def capture_all_screens(max_width: int = int(os.getenv("CLICKY_IMG_WIDTH", "1280") or 1280)) -> List[ScreenShot]:
     """Capture all monitors. Each ScreenShot carries everything needed
     to convert detection coords back into logical screen space."""
     dpi = _query_dpi_scale()
     results = []
     with mss.mss() as sct:
         # mss monitor index 0 is the combined virtual screen; 1+ are real monitors
-        for i, monitor in enumerate(sct.monitors[1:], start=1):
+        mons = sct.monitors[1:]
+        if os.getenv("CLICKY_MONITORS", "all").strip().lower() == "primary":
+            mons = mons[:1]   # mss lists the primary monitor first
+        for i, monitor in enumerate(mons, start=1):
             raw = sct.grab(monitor)
             img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 

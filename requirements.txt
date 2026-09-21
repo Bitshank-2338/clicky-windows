@@ -61,3 +61,5 @@ pynput>=1.7.7
 
 # Live collaboration (WebRTC) — install when collab signalling server exists
 # aiortc>=1.9.0
+
+pyttsx3>=2.90

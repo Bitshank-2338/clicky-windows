@@ -4,7 +4,7 @@ from typing import Callable, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QSizePolicy, QComboBox, QFrame
+    QPushButton, QLineEdit, QScrollArea, QSizePolicy, QComboBox, QFrame
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QCursor
@@ -149,6 +149,7 @@ class CompanionPanel(QWidget):
     on_push_to_talk_released = pyqtSignal()
     on_model_changed         = pyqtSignal(str)
     on_document_dropped      = pyqtSignal(str)
+    on_text_submitted        = pyqtSignal(str)
     _sig_copilot_code        = pyqtSignal(str, str)   # (user_code, verification_uri)
     _sig_copilot_error       = pyqtSignal(str)
 
@@ -253,6 +254,18 @@ class CompanionPanel(QWidget):
         scroll.setWidget(self._response_label)
         root.addWidget(scroll, stretch=1)
 
+        # Typed input: type a question, press Enter (alternative to voice)
+        self._text_input = QLineEdit()
+        self._text_input.setPlaceholderText("Or type a question and press Enter")
+        self._text_input.setFixedHeight(34)
+        self._text_input.setStyleSheet(
+            "QLineEdit { background: rgba(255,255,255,14); border: 1px solid rgba(255,255,255,40);"
+            " border-radius: 8px; color: white; padding: 4px 10px; font-size: 13px; }"
+            "QLineEdit:focus { border: 1px solid #7c5cff; }"
+        )
+        self._text_input.returnPressed.connect(self._submit_typed)
+        root.addWidget(self._text_input)
+
         # Push-to-talk button
         self._ptt_btn = QPushButton(f"Say 'Clicky' or hold {_hotkey_label()}")
         self._ptt_btn.setObjectName("hotkey_btn")
@@ -335,6 +348,13 @@ class CompanionPanel(QWidget):
             self._waveform.start()
         else:
             self._waveform.stop()
+
+    def _submit_typed(self):
+        text = self._text_input.text().strip()
+        if not text:
+            return
+        self._text_input.clear()
+        self.on_text_submitted.emit(text)
 
     def update_response(self, text: str):
         """Append streaming text chunk."""

@@ -349,6 +349,9 @@ class Config:
             return "faster_whisper"
 
     def tts_provider(self) -> str:
+        forced = os.getenv("CLICKY_TTS", "").strip().lower()
+        if forced in ("elevenlabs", "openai", "edge_tts", "local", "off"):
+            return forced
         if self.elevenlabs_api_key:
             return "elevenlabs"
         if self.openai_api_key:

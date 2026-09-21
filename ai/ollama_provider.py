@@ -1,3 +1,4 @@
+import os
 import base64
 from typing import AsyncIterator, List
 
@@ -114,7 +115,7 @@ class OllamaProvider(BaseLLMProvider):
         messages.append(user_msg)
 
         options: dict = {
-            "num_predict": 1024,
+            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "1024") or 1024),
             "num_gpu": cfg.ollama_num_gpu,
             "num_ctx": cfg.ollama_num_ctx,
         }

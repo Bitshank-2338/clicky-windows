@@ -123,6 +123,8 @@ def _setup_logging():
         root = logging.getLogger()
         root.setLevel(logging.INFO)
         root.addHandler(handler)
+        # httpx logs full URLs at INFO; keep API keys out of the log file
+        logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("clicky").info(
             "=== Clicky starting (python %s) ===", sys.version.split()[0]
         )
@@ -130,7 +132,23 @@ def _setup_logging():
         pass  # logging must never block startup
 
 
+_instance_lock = None   # keep a reference so the port stays bound
+
+
+def _ensure_single_instance():
+    """Exit (code 3) if another Clicky is already running."""
+    global _instance_lock
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 47613))
+    except OSError:
+        sys.exit(3)
+    _instance_lock = s
+
+
 def main():
+    _ensure_single_instance()
     _setup_logging()
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -191,6 +209,7 @@ def main():
 
     # Panel → Manager
     panel.on_model_changed.connect(manager.set_model)
+    panel.on_text_submitted.connect(manager.ask_text)
 
     def _on_doc_dropped(path: str):
         ok = manager.attach_document(path)

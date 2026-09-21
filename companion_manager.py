@@ -1,3 +1,4 @@
+import os
 """
 Central state machine for Clicky Windows.
 
@@ -274,7 +275,7 @@ class CompanionManager(QObject):
         self._state: AppState = AppState.IDLE
         self._history: List[Message] = []
         self._current_model: Optional[str] = None
-        self._web_search_enabled = True
+        self._web_search_enabled = os.getenv("CLICKY_WEB_SEARCH", "1").strip().lower() not in ("0", "false", "off", "no")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Providers (lazy)
@@ -531,6 +532,21 @@ class CompanionManager(QObject):
                 _ensure_ollama_running()
                 from ai.ollama_provider import OllamaProvider
                 self._llm = OllamaProvider()
+            # Cloud providers fall back to local Ollama on overload/quota errors
+            if (provider in ("claude", "openai", "gemini", "copilot")
+                    and os.getenv("CLICKY_FALLBACK_OLLAMA", "1").strip().lower()
+                    not in ("0", "false", "off", "no")):
+                from ai.fallback_provider import FallbackLLM
+
+                def _make_ollama():
+                    _ensure_ollama_running()
+                    from ai.ollama_provider import OllamaProvider
+                    return OllamaProvider()
+
+                self._llm = FallbackLLM(
+                    self._llm, _make_ollama, name=provider.capitalize(),
+                    notify=lambda m: self.sig_response_chunk.emit(m),
+                )
         return self._llm
 
     def _get_stt(self):
@@ -564,6 +580,12 @@ class CompanionManager(QObject):
             elif provider == "openai":
                 from audio.tts.openai_tts_provider import OpenAITTSProvider
                 self._tts = OpenAITTSProvider()
+            elif provider == "off":
+                from audio.tts.off_tts_provider import OffTTSProvider
+                self._tts = OffTTSProvider()
+            elif provider == "local":
+                from audio.tts.local_tts_provider import LocalTTSProvider
+                self._tts = LocalTTSProvider()
             else:
                 from audio.tts.edge_tts_provider import EdgeTTSProvider
                 self._tts = EdgeTTSProvider()
@@ -690,18 +712,39 @@ class CompanionManager(QObject):
         if self._claim_end():
             await self._end_capture_and_process()
 
-    async def _end_capture_and_process(self):
+    def ask_text(self, text: str):
+        """Typed question from the panel. Same pipeline as voice, no mic."""
+        text = (text or "").strip()
+        if not text:
+            return
+        if not self._claim_begin():
+            return
         try:
-            pcm = self._listener.stop_recording()
-        except Exception as e:
-            _log.exception("mic stop failed")
-            self.sig_error.emit(f"Microphone capture failed: {e}")
-            self._emit_state(AppState.IDLE)
-            return
-        _log.info("captured %.1fs of audio", len(pcm) / 32000)
-        if len(pcm) < 3200:  # < 0.1s of audio — ignore
-            self._emit_state(AppState.IDLE)
-            return
+            from audio.playback import stop_audio
+            stop_audio()
+        except Exception:
+            pass
+        self._typed_text = text
+        self._end_claimed = True
+        self._submit(self._end_capture_and_process())
+
+    async def _end_capture_and_process(self):
+        typed = getattr(self, "_typed_text", None)
+        self._typed_text = None
+        if typed:
+            pcm = b"\x00" * 32000   # placeholder; STT is skipped for typed text
+        else:
+            try:
+                pcm = self._listener.stop_recording()
+            except Exception as e:
+                _log.exception("mic stop failed")
+                self.sig_error.emit(f"Microphone capture failed: {e}")
+                self._emit_state(AppState.IDLE)
+                return
+            _log.info("captured %.1fs of audio", len(pcm) / 32000)
+            if len(pcm) < 3200:  # < 0.1s of audio — ignore
+                self._emit_state(AppState.IDLE)
+                return
 
         # 32000 bytes == 1s of 16 kHz mono int16.
         audio_seconds = len(pcm) / 32000.0
@@ -712,9 +755,12 @@ class CompanionManager(QObject):
         try:
             # 1. Transcribe — bounded so a hung/downloading STT model can
             # never freeze the UI on "Thinking..." forever
-            transcript = await asyncio.wait_for(
-                self._get_stt().transcribe(pcm), timeout=90,
-            )
+            if typed:
+                transcript = typed
+            else:
+                transcript = await asyncio.wait_for(
+                    self._get_stt().transcribe(pcm), timeout=90,
+                )
             _log.info("transcript: %r (provider=%s)",
                       transcript[:120], cfg.llm_provider())
             if not transcript.strip():
@@ -989,7 +1035,7 @@ class CompanionManager(QObject):
             async for chunk in self._get_llm().stream_response(
                 user_text=transcript,
                 screenshots_b64=images_b64,
-                history=history,
+                history=history[-int(os.getenv("CLICKY_HISTORY_MSGS", "20") or 20):],
                 system_prompt=system,
                 model=self._current_model,
             ):

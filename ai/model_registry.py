@@ -162,12 +162,20 @@ async def _fetch_gemini() -> list[dict]:
             continue   # skip embedding-only / TTS-only models
         if not mid:
             continue
+        low = mid.lower()
+        # Skip models that can't answer chat questions (image gen, music,
+        # robotics, speech, video, embeddings).
+        if any(k in low for k in ("banana", "lyria", "robotics", "imagen", "veo",
+                                  "tts", "image-generation", "embedding", "aqa",
+                                  "native-audio", "live", "deep-research", "antigravity",
+                                  "computer-use")):
+            continue
         out.append({
             "id": mid,
             "label": m.get("displayName") or mid,
-            # All Gemini 1.5+ models accept images as input
-            "vision": "vision" in mid or "gemini-1.5" in mid or "gemini-2" in mid
-                      or "gemini-3" in mid,
+            # Gemini and Gemma 3+ families accept images as input
+            "vision": low.startswith("gemini") or low.startswith("gemma-3")
+                      or low.startswith("gemma-4") or "vision" in low,
         })
     # Sort: newer first (rough heuristic — versions in name)
     out.sort(key=lambda m: m["id"], reverse=True)
