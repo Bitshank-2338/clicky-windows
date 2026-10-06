@@ -35,7 +35,7 @@ Works **100% offline** with Ollama or LM Studio, or plug in your Claude / OpenAI
 │  │  ● Thinking…              │              │
 │  │  "The search bar is       │              │
 │  │   right here ↗"           │              │
-│  │  Model: claude-sonnet-4…  │              │
+│  │  Model: claude-sonnet-5…  │              │
 │  └───────────────────────────┘              │
 └─────────────────────────────────────────────┘
 ```
@@ -81,10 +81,10 @@ The blue triangle sits **35 px right / 25 px below** your real cursor. When you 
 
 | Provider | How to unlock |
 |---|---|
-| **Claude** (Anthropic) | Tray → Setup & Diagnostics → API Keys… (or `ANTHROPIC_API_KEY` in `.env`) |
-| **OpenAI GPT-4o** | Tray → Setup & Diagnostics → API Keys… (or `OPENAI_API_KEY` in `.env`) |
+| **Claude** (Anthropic) — default `claude-sonnet-5-5` | Tray → Setup & Diagnostics → API Keys… (or `ANTHROPIC_API_KEY` in `.env`) |
+| **OpenAI** — default `gpt-6-sol` | Tray → Setup & Diagnostics → API Keys… (or `OPENAI_API_KEY` in `.env`) |
 | **GitHub Copilot** | Free for students — device-flow login via tray |
-| **Gemini** | Tray → Setup & Diagnostics → API Keys… (or `GOOGLE_API_KEY` in `.env`) |
+| **Gemini** — default `gemini-3.8-flash` | Tray → Setup & Diagnostics → API Keys… (or `GOOGLE_API_KEY` in `.env`) |
 | **Ollama** (local) | Run `ollama serve` — free, always available |
 | **LM Studio** (local) | Start the local server in LM Studio's Developer tab — free, no key |
 
@@ -93,10 +93,12 @@ Priority chain (auto-detected): **Claude → OpenAI → Copilot → Gemini → O
 Switch mid-session from the system tray — takes about a second, no restart needed.
 
 ### 📋 Live Model Lists (Auto-Refreshed)
-- Claude, OpenAI, Gemini: live model list fetched from vendor APIs, **30-day cache**
-- GitHub Copilot: live `/models` endpoint with billing multiplier, **6-hour cache**
-- Free Copilot models auto-prioritised (no premium quota burned by default)
-- Panel model dropdown always reflects the actual models available to your account
+- Claude, OpenAI, Gemini: live model list fetched from vendor APIs, **24-hour cache** — a new release shows up within a day
+- Lists are ordered newest-first with the recommended default on top. The first entry is the model Clicky starts on, so the default is a deliberate choice per provider: the fast, vision-capable tier of the newest generation
+- Only models that can actually hold a conversation are listed: OpenAI's deprecated and Responses-only models, and Gemini's image / speech / live-audio models, are filtered out
+- GitHub Copilot: live `/models` endpoint, each model verified with a real request, **6-hour cache**
+- Your selection survives a background refresh
+- Reasoning models (GPT-5+, o-series, Claude 5, Gemini 3) are set to low effort so spoken answers start quickly instead of waiting on hidden thinking
 
 ### 🔊 Multi-Provider TTS
 
@@ -298,27 +300,27 @@ A blue dot appears in your system tray. Clicky is now running.
 
 No API keys at all — uses local AI, local STT, free TTS:
 
-```env
-OLLAMA_VISION_MODEL=qwen2.5vl:7b
-OLLAMA_TEXT_MODEL=qwen2.5-coder:7b
-```
+There's nothing to configure — Clicky's default is `qwen2.5vl:3b` (3.2 GB), one model that reads your screen and answers text questions.
 
 1. Install [Ollama](https://ollama.ai) → run `ollama serve` (or install [LM Studio](https://lmstudio.ai) and start its local server instead)
-2. Pull models: `ollama pull qwen2.5vl:7b && ollama pull qwen2.5-coder:7b`
+2. Pull the model: `ollama pull qwen2.5vl:3b` (the first-run wizard does this for you)
 3. `pip install -r requirements.txt`
 4. `python main.py`
 
-Clicky uses **two Ollama model slots**: a vision model for screen-aware questions (pointing, "what's on screen?") and a text model for Code Mode / journal Q&A. Switch between them anytime from the tray: **Tray → Ollama → Vision model / Text model**.
+Clicky has **two Ollama model slots**: a vision model for screen-aware questions (pointing, "what's on screen?") and a text model for Code Mode / journal Q&A. Both default to the same model, so there's only one download. Switch either anytime from the tray: **Tray → Ollama → Vision model / Text model**.
+
+**Why `qwen2.5vl:3b` and not something newer?** We benchmarked the newer families (Qwen3.5, Qwen3-VL, Gemma 3, MiniCPM-V 4.6) against it on a 4 GB laptop GPU and on CPU only, using Clicky's real prompt including web-search results. The newer ones read a screen slightly better in places, but Qwen3.5 and Gemma 3 take **over a minute per answer on CPU-only machines**, Qwen3-VL can't be told to skip its hidden reasoning (so replies come back blank or slow), and Gemma 3 sprays pointing tags at questions that aren't about the screen. `qwen2.5vl:3b` answered in about 2 seconds on CPU, kept answers short, and correctly said so when the search results didn't contain the answer. If you have a GPU with 8 GB or more, `qwen2.5vl:7b` is the natural upgrade: it was the most accurate model we tested (6/6 on answering from search results, 10/10 on reading a dense screen), though on a 4 GB laptop it needed 4–12 seconds per answer.
 
 **Recommended free models (Tray → Ollama → Pull recommended…):**
 
 | Slot | Model | Size | Good for |
 |---|---|---|---|
-| Vision | `qwen2.5vl:7b` | 5 GB | Screen reading, pointing — best quality |
-| Vision | `llava:7b` | 4 GB | Alternative vision model |
-| Vision | `llava:7b` | 4 GB | Fastest option |
-| Text | `qwen2.5-coder:7b` | 4 GB | Code questions — excellent |
-| Text | `llama3.2:3b` | 2 GB | Tiny, fits any GPU |
+| Vision + text | `qwen2.5vl:3b` | 3.2 GB | **Default** — accurate, concise, fast even without a GPU |
+| Vision + text | `qwen2.5vl:7b` | 6 GB | Same family, stronger — for 8 GB+ graphics cards |
+| Vision | `qwen3.5:4b` | 3.3 GB | Newest; reads screens very well but needs a GPU |
+| Vision | `llava:7b` | 4.7 GB | Older fallback |
+| Text | `qwen2.5-coder:7b` | 4.7 GB | Code questions — excellent |
+| Text | `llama3.2:3b` | 2 GB | Fastest text-only model |
 | Text | `mistral:7b` | 4 GB | General Q&A |
 
 **Limitations vs. paid providers:** slower responses, web search uses DuckDuckGo only.
@@ -406,7 +408,7 @@ main.py
   │     ├── skills/             # user-extensible voice triggers
   │     ├── ai.web_search       # DuckDuckGo + Tavily + citation builder
   │     ├── ai.element_locator  # Claude Computer Use → exact (x, y) pixel
-  │     ├── ai.model_registry   # live model lists with 30-day cache
+  │     ├── ai.model_registry   # live model lists, 24h cache, newest-first
   │     ├── LLM provider        # Claude / OpenAI / Copilot / Gemini / Ollama / LM Studio
   │     └── TTS provider        # ElevenLabs / OpenAI / Edge TTS
   ├── CursorOverlay             # transparent click-through Qt window
@@ -455,13 +457,13 @@ clicky-windows/
 ├── ai/
 │   ├── base_provider.py         # BaseLLMProvider ABC
 │   ├── claude_provider.py       # Anthropic Claude
-│   ├── openai_provider.py       # OpenAI GPT-4o
+│   ├── openai_provider.py       # OpenAI (GPT-6 / GPT-5 / o-series)
 │   ├── gemini_provider.py       # Google Gemini (via httpx)
 │   ├── ollama_provider.py       # Local Ollama
 │   ├── lmstudio_provider.py     # Local LM Studio (OpenAI-compatible server)
 │   ├── github_copilot_provider.py  # Copilot OAuth + live /models
 │   ├── element_locator.py       # Computer Use → pixel coords
-│   ├── model_registry.py        # live model lists, 30-day cache
+│   ├── model_registry.py        # live model lists, 24h cache, filtered + verified
 │   └── web_search.py            # DuckDuckGo + Tavily + citations
 │
 ├── audio/
@@ -521,7 +523,7 @@ clicky-windows/
 | Variable | Default | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Claude LLM + Computer Use pointing |
-| `OPENAI_API_KEY` | — | GPT-4o LLM + Whisper STT + OpenAI TTS |
+| `OPENAI_API_KEY` | — | OpenAI LLM (GPT-6 / GPT-5 / o-series) + Whisper STT + OpenAI TTS |
 | `GOOGLE_API_KEY` | — | Gemini LLM |
 | `DEEPGRAM_API_KEY` | — | Deepgram STT |
 | `ELEVENLABS_API_KEY` | — | ElevenLabs TTS |
@@ -529,8 +531,8 @@ clicky-windows/
 | `TAVILY_API_KEY` | — | Tavily search (upgrades DuckDuckGo) |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `qwen2.5vl:3b` | Legacy single-model fallback |
-| `OLLAMA_VISION_MODEL` | *(empty)* | Ollama model for screen-aware tasks (pointing, describe screen) |
-| `OLLAMA_TEXT_MODEL` | *(empty)* | Ollama model for Code Mode + journal Q&A |
+| `OLLAMA_VISION_MODEL` | *(empty → `qwen2.5vl:3b`)* | Ollama model for screen-aware tasks (pointing, describe screen) |
+| `OLLAMA_TEXT_MODEL` | *(empty → `qwen2.5vl:3b`)* | Ollama model for Code Mode + journal Q&A |
 | `LMSTUDIO_HOST` | `http://localhost:1234/v1` | LM Studio local server URL |
 | `LMSTUDIO_MODEL` | *(empty)* | Force a specific model; empty = whatever's loaded |
 | `CLICKY_HOTKEY` | `ctrl+win` | Global push-to-talk combo |
@@ -567,7 +569,7 @@ clicky-windows/
 → If you see a context-length error, raise the context length when loading the model
 
 **Pointing at wrong location**
-→ Make sure your active LLM supports vision (Copilot gpt-4o, Claude, Gemini 1.5+, or a vision Ollama/LM Studio model)
+→ Make sure your active LLM supports vision (Copilot gpt-4.1, Claude, Gemini, OpenAI GPT-5/6, or a vision Ollama/LM Studio model)
 → For Ollama: set a vision model via **Tray → Ollama → Vision model**
 → The universal two-stage grid locator works with every vision provider — no Anthropic key required
 

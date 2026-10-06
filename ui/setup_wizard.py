@@ -56,6 +56,20 @@ def mark_setup_complete() -> None:
         pass
 
 
+def _shared_model() -> bool:
+    """True when one model serves both text and screen questions (the default)."""
+    return cfg.ollama_text_model == cfg.ollama_vision_model
+
+
+def _size_hint(name: str) -> str:
+    """Download size for a model tag, from the curated registry."""
+    from ai.ollama_models_registry import RECOMMENDED_TEXT, RECOMMENDED_VISION
+    for rec in (*RECOMMENDED_VISION, *RECOMMENDED_TEXT):
+        if rec.name == name:
+            return rec.size
+    return "a few GB"
+
+
 def _pretty_hotkey() -> str:
     return "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
 
@@ -240,13 +254,25 @@ class SetupWizard(QDialog):
 
         elif step == "text_model":
             name = cfg.ollama_text_model
-            self.title.setText("Download the text model")
-            self.subtitle.setText(
-                f"Pulling {name} (≈2 GB). This is what answers when you ask Clicky "
-                f"a question."
-            )
+            if _shared_model():
+                # One multimodal model covers both jobs, so there is only one
+                # download to offer — not a text step followed by a vision step
+                # that asks for the same file again.
+                self.title.setText("Download Clicky's AI model")
+                self.subtitle.setText(
+                    f"Pulling {name} (≈{_size_hint(name)}). It answers your questions and "
+                    f"reads your screen — pointing, screenshots, charts — so this is "
+                    f"the only model you need."
+                )
+                self.skip_btn.setText("Skip — I'll add one later")
+            else:
+                self.title.setText("Download the text model")
+                self.subtitle.setText(
+                    f"Pulling {name} (≈{_size_hint(name)}). This is what answers when you "
+                    f"ask Clicky a question."
+                )
+                self.skip_btn.setText("Skip this model")
             self.action_btn.setText(f"Pull {name}")
-            self.skip_btn.setText("Skip this model")
 
         elif step == "pulling_text":
             self.title.setText(f"Pulling {cfg.ollama_text_model}…")
@@ -259,7 +285,7 @@ class SetupWizard(QDialog):
             name = cfg.ollama_vision_model
             self.title.setText("Download the vision model (optional)")
             self.subtitle.setText(
-                f"Pulling {name} (≈3 GB). Needed only when Clicky reads your screen "
+                f"Pulling {name} (≈{_size_hint(name)}). Needed only when Clicky reads your screen "
                 f"— pointing, screenshots, reading charts. You can skip this and "
                 f"add it later from the tray."
             )
@@ -352,7 +378,8 @@ class SetupWizard(QDialog):
             mark_setup_complete()
             self.reject()
         elif s == "text_model":
-            self._set_step("vision_model")
+            # Skipping a shared model means skipping the only download there is.
+            self._set_step("done" if _shared_model() else "vision_model")
         elif s == "vision_model":
             self._set_step("done")
 
@@ -468,7 +495,9 @@ class SetupWizard(QDialog):
         if s == "installing":
             self._goto_next_model_step()
         elif s == "pulling_text":
-            self._set_step("vision_model")
+            # Re-evaluates what is installed, so a shared text/vision model
+            # skips the vision step instead of offering the same download twice.
+            self._goto_next_model_step()
         elif s == "pulling_vision":
             self._set_step("done")
 

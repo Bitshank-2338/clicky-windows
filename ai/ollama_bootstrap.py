@@ -34,8 +34,12 @@ OLLAMA_DOWNLOAD_URL = "https://ollama.com/download/OllamaSetup.exe"
 
 # Default models we recommend for the free tier. Kept small so the
 # download finishes in a reasonable time on a typical home connection.
-DEFAULT_TEXT_MODEL = "llama3.2:3b"          # ~2 GB
-DEFAULT_VISION_MODEL = "qwen2.5vl:3b"        # ~3 GB
+# Imported rather than repeated: config and the setup wizard once disagreed on
+# the default model, and that mismatch is how users ended up on a model that
+# could not load.
+from ai.ollama_models_registry import (   # noqa: E402
+    DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL,
+)
 
 
 # ─── Detection ────────────────────────────────────────────────────────────────

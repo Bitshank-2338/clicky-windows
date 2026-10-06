@@ -285,6 +285,10 @@ class CompanionPanel(QWidget):
         self._set_models_for(cfg.llm_provider())
 
     def _set_models_for(self, provider: str):
+        # Remember what the user picked: a background refresh rebuilds this list
+        # (daily now), and re-selecting the first entry every time would quietly
+        # switch them off the model they chose.
+        previous = self._model_combo.currentData() if self._model_combo.count() else None
         # Avoid firing on_model_changed while we rebuild
         self._model_combo.blockSignals(True)
         self._model_combo.clear()
@@ -303,6 +307,10 @@ class CompanionPanel(QWidget):
                 self._model_combo.addItem("default", userData="default")
         else:   # ollama
             self._model_combo.addItem(cfg.ollama_model, userData=cfg.ollama_model)
+        if previous:
+            idx = self._model_combo.findData(previous)
+            if idx >= 0:
+                self._model_combo.setCurrentIndex(idx)
         self._model_combo.blockSignals(False)
         # Fire once with the new default model id (NOT the display label) so
         # the manager picks it up — important when label != id.

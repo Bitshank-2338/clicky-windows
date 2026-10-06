@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -28,6 +30,23 @@ _CU_RESOLUTIONS = (
 )
 
 _API_URL = "https://api.anthropic.com/v1/messages"
+
+_log = logging.getLogger("clicky.locator")
+
+# Claude Computer Use is tied to a specific model + tool version. This module
+# pins claude-sonnet-4-6 with computer_20251124; Claude 5.x models require a
+# different toolset (computer_toolset_20260801) and reject the old one. When
+# the API starts refusing this request — model retired, tool version dropped —
+# detect_element() used to return None, which the caller can't tell apart from
+# "no specific element here", so pointing quietly stopped working. Remember the
+# refusal instead, so the caller can fall back to the universal grid locator.
+_UNAVAILABLE_FOR_S = 600
+_unavailable_until = 0.0
+
+
+def is_available() -> bool:
+    """True if Computer Use is configured and hasn't recently been refused."""
+    return bool(cfg.anthropic_api_key) and time.monotonic() >= _unavailable_until
 _BETA_HEADER = "computer-use-2025-11-24"
 
 
@@ -143,6 +162,17 @@ async def detect_element(
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(_API_URL, json=body, headers=headers)
             if r.status_code >= 400:
+                # 429 and 5xx are transient. Anything else (400 unsupported
+                # tool, 404 retired model, 401, 403) will keep failing, so stop
+                # trying for a while and let the caller use another locator.
+                if r.status_code not in (429,) and r.status_code < 500:
+                    global _unavailable_until
+                    _unavailable_until = time.monotonic() + _UNAVAILABLE_FOR_S
+                    _log.warning(
+                        "Computer Use refused (%s) for %s — falling back to the "
+                        "grid locator for %d min: %s",
+                        r.status_code, model, _UNAVAILABLE_FOR_S // 60, r.text[:200],
+                    )
                 return None
             data = r.json()
     except Exception:

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import webbrowser
@@ -338,6 +339,36 @@ def _usable_models(flat: list[dict]) -> list[dict]:
     ]
 
 
+def _is_reasoning_id(model_id: str) -> bool:
+    """GPT-5 and newer, and the o-series, think before answering."""
+    m = re.match(r"gpt-(\d+)", model_id)
+    if m:
+        return int(m.group(1)) >= 5
+    return re.match(r"o\d", model_id) is not None
+
+
+def _adapt_body(body: dict, error_text: str) -> bool:
+    """Fix a request the server rejected for a parameter it doesn't support.
+
+    Copilot fronts OpenAI, Anthropic, Google and others, and they disagree:
+    GPT-5/o-series reject `max_tokens` (they want `max_completion_tokens`) and
+    reject any `temperature` but the default. Rather than keep a table that
+    goes stale, take the server's word for it and retry once with the offending
+    parameter swapped or dropped. True if something changed.
+    """
+    low = (error_text or "").lower()
+    if "temperature" in low and "temperature" in body:
+        del body["temperature"]
+        return True
+    if "max_completion_tokens" in low and "max_completion_tokens" in body:
+        body["max_tokens"] = body.pop("max_completion_tokens")
+        return True
+    if "max_tokens" in low and "max_tokens" in body:
+        body["max_completion_tokens"] = body.pop("max_tokens")
+        return True
+    return False
+
+
 async def _model_answers(client: httpx.AsyncClient, token: str, model_id: str) -> bool:
     """One tiny non-streaming call to see whether this model is really callable.
 
@@ -346,27 +377,41 @@ async def _model_answers(client: httpx.AsyncClient, token: str, model_id: str) -
     still 400 with `model_not_supported`. Asking the endpoint directly is the
     only reliable signal, and it keeps working when GitHub reshuffles the
     catalogue again.
+
+    The probe must not fail for the wrong reason: it used to send `max_tokens`,
+    which GPT-5-class models reject outright, so a perfectly callable model
+    would have been pruned for a parameter name. It now adapts like the real
+    request does.
     """
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Editor-Version": EDITOR_VERSION,
+        "Editor-Plugin-Version": EDITOR_PLUGIN,
+        "Copilot-Integration-Id": "vscode-chat",
+        "Content-Type": "application/json",
+    }
+    body: dict = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": False,
+    }
+    body["max_completion_tokens" if _is_reasoning_id(model_id) else "max_tokens"] = 16
     try:
-        r = await client.post(
-            COPILOT_CHAT_URL,
-            json={
-                "model": model_id,
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-                "stream": False,
-            },
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Editor-Version": EDITOR_VERSION,
-                "Editor-Plugin-Version": EDITOR_PLUGIN,
-                "Copilot-Integration-Id": "vscode-chat",
-                "Content-Type": "application/json",
-            },
-        )
-        # 200 = usable. 402/429 = usable but quota/rate-limited right now, so
-        # keep it: the user can still pick it once quota resets.
-        return r.status_code in (200, 402, 429)
+        for _ in range(3):
+            r = await client.post(COPILOT_CHAT_URL, json=body, headers=headers)
+            # 200 = usable. 402/429 = usable but quota/rate-limited right now,
+            # so keep it: the user can still pick it once quota resets.
+            if r.status_code in (200, 402, 429):
+                return True
+            # A reasoning model that spends the whole probe budget thinking
+            # answers 400 "...max_tokens or model output limit was reached".
+            # That proves the model exists and accepted the request.
+            if r.status_code == 400 and "output limit was reached" in r.text:
+                return True
+            if r.status_code == 400 and _adapt_body(body, r.text):
+                continue
+            return False
+        return False
     except Exception:
         return False
 
@@ -621,14 +666,23 @@ class GitHubCopilotProvider(BaseLLMProvider):
             body = {
                 "model": model,
                 "messages": messages,
-                "max_tokens": MAX_TOKENS,
-                "temperature": 0.7,
                 "stream": True,
             }
-            async with client.stream("POST", COPILOT_CHAT_URL, json=body, headers=headers) as r:
+            if _is_reasoning_id(model):
+                # GPT-5+/o-series: new parameter name, no custom temperature,
+                # and extra room because hidden thinking shares the limit.
+                body["max_completion_tokens"] = MAX_TOKENS * 2
+            else:
+                body["max_tokens"] = MAX_TOKENS
+                body["temperature"] = 0.7
+
+            for _attempt in range(3):
+              async with client.stream("POST", COPILOT_CHAT_URL, json=body, headers=headers) as r:
                 if r.status_code >= 400:
                     err = await r.aread()
                     snippet = (err.decode("utf-8", "replace") or "")[:400]
+                    if r.status_code == 400 and _attempt < 2 and _adapt_body(body, snippet):
+                        continue
                     if r.status_code == 400 and "model" in snippet.lower():
                         raise RuntimeError(
                             f"Copilot rejected model '{model}'. It may have been "
@@ -663,6 +717,7 @@ class GitHubCopilotProvider(BaseLLMProvider):
                         text = delta.get("content")
                         if text:
                             yield text
+              break
 
     async def health_check(self) -> bool:
         try:

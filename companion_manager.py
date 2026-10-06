@@ -182,6 +182,20 @@ def _split_steps(text: str) -> list[str]:
     return steps
 
 
+def _computer_use_available() -> bool:
+    """Computer Use needs an Anthropic key AND the API to be accepting it.
+
+    If Anthropic has been rejecting the request (retired model, unsupported tool
+    version) this is False for a while and pointing falls through to the
+    universal grid locator, which works with whichever LLM is active.
+    """
+    try:
+        from ai.element_locator import is_available
+        return is_available()
+    except Exception:
+        return bool(cfg.anthropic_api_key)
+
+
 def _speakable(text: str) -> str:
     """Make LLM text safe for TTS: models emit LaTeX ("\\( a \\)",
     "\\[ a^2 + b^2 = c^2 \\]") and markdown that edge-tts reads aloud
@@ -865,7 +879,7 @@ class CompanionManager(QObject):
                     async def _ready(pt=_pt):
                         return pt
                     locate_task = asyncio.create_task(_ready())
-                elif cfg.anthropic_api_key:
+                elif _computer_use_available():
                     # Path A — Anthropic Computer Use (best accuracy)
                     from ai.element_locator import detect_element
                     locate_task = asyncio.create_task(detect_element(

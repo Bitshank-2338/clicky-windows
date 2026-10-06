@@ -97,6 +97,22 @@ after the words that describe it, spread across the lesson (1-2 tags per
 sentence), never dump all tags at the start or end."""
 
 
+# Models that pull fine but can no longer be loaded by current Ollama. Old
+# copies of .env.example told users to set OLLAMA_MODEL=llama3.2-vision, so a
+# lot of installs have it pinned — and then every question fails with HTTP 500.
+# A pin like that is a stale default, not a decision, so it is ignored.
+_DEAD_OLLAMA_PREFIXES = ("llama3.2-vision",)
+
+
+def _ollama_model_env(*keys: str, default: str) -> str:
+    """First non-empty env value among `keys`, ignoring pins to dead models."""
+    for key in keys:
+        value = os.getenv(key, "").strip()
+        if value and not value.lower().startswith(_DEAD_OLLAMA_PREFIXES):
+            return value
+    return default
+
+
 @dataclass
 class Config:
     # LLM
@@ -110,18 +126,20 @@ class Config:
     ollama_host: str = field(default_factory=lambda: os.getenv("OLLAMA_HOST", "http://localhost:11434"))
     # Legacy single-model knob — still respected as a fallback for both slots
     # below. New users should prefer OLLAMA_VISION_MODEL / OLLAMA_TEXT_MODEL.
-    # Default was "llama3.2-vision" until it stopped loading: it is built on
-    # the 'mllama' architecture, which newer Ollama releases dropped. `ollama
-    # pull` still succeeds and `ollama list` still shows it, so it looked
-    # installed and correct — then every screen-aware question came back as an
-    # opaque HTTP 500 from /api/chat. qwen2.5vl:3b is what the setup wizard
-    # already pulls, so this also makes the two agree.
-    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b"))
+    # Defaults live in ai/ollama_models_registry.py (DEFAULT_VISION_MODEL), which
+    # also records the benchmark behind the choice; repeated here only because
+    # config cannot import from ai/ without a cycle — keep them in step.
+    # History: "llama3.2-vision" until that model stopped loading (its 'mllama'
+    # architecture was dropped: `ollama pull` still worked, `ollama list` still
+    # showed it, and every question came back as an HTTP 500), then
+    # qwen2.5vl:3b, which stayed the default after the newer qwen3.5 / qwen3-vl /
+    # gemma3 families lost to it on CPU speed or reliability.
+    ollama_model: str = field(default_factory=lambda: _ollama_model_env("OLLAMA_MODEL", default="qwen2.5vl:3b"))
     # Two-slot model selection: vision = screen-aware queries, text = Code Mode
     # / journal Q&A / no-screenshot replies. Either can be overridden at runtime
     # via cfg.set_ollama_model("vision"|"text", name).
-    ollama_vision_model: str = field(default_factory=lambda: os.getenv("OLLAMA_VISION_MODEL", "") or os.getenv("OLLAMA_MODEL", "qwen2.5vl:3b"))
-    ollama_text_model:   str = field(default_factory=lambda: os.getenv("OLLAMA_TEXT_MODEL", "") or "llama3.2:3b")
+    ollama_vision_model: str = field(default_factory=lambda: _ollama_model_env("OLLAMA_VISION_MODEL", "OLLAMA_MODEL", default="qwen2.5vl:3b"))
+    ollama_text_model:   str = field(default_factory=lambda: _ollama_model_env("OLLAMA_TEXT_MODEL", default="qwen2.5vl:3b"))
 
     # Ollama performance tuning knobs (keep_alive, GPU offload, thread count, context length)
     ollama_keep_alive:   str = field(default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "10m"))
