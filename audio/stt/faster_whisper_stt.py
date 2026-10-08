@@ -9,6 +9,26 @@ from config import cfg
 _model_cache = None
 
 
+def wav_to_whisper_input(wav_bytes: bytes):
+    """Decode Clicky's own 16 kHz mono PCM16 WAV into the float32 array
+    faster-whisper accepts directly.
+
+    Handing faster-whisper a file path makes it decode through PyAV, and
+    faster-whisper 1.2.x calls av.open(metadata_errors=...), an argument PyAV
+    19 removed — so on a fresh install every voice question failed with
+    "open() got an unexpected keyword argument 'metadata_errors'". We already
+    hold the raw samples, so skip the round trip through a temp file and PyAV.
+    """
+    import wave
+    import numpy as np
+
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1 or w.getframerate() != 16000:
+            raise ValueError("expected 16 kHz mono 16-bit audio for transcription")
+        pcm = w.readframes(w.getnframes())
+    return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def _get_model():
     global _model_cache
     if _model_cache is None:
@@ -32,14 +52,9 @@ class FasterWhisperSTT(BaseSTT):
         return await loop.run_in_executor(None, self._run, wav_bytes)
 
     def _run(self, wav_bytes: bytes) -> str:
-        import tempfile, os
         model = _get_model()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav_bytes)
-            path = f.name
-        try:
-            lang = cfg.whisper_language or None  # None = auto-detect
-            segments, _ = model.transcribe(path, beam_size=5, language=lang)
-            return " ".join(s.text.strip() for s in segments).strip()
-        finally:
-            os.unlink(path)
+        lang = cfg.whisper_language or None  # None = auto-detect
+        segments, _ = model.transcribe(
+            wav_to_whisper_input(wav_bytes), beam_size=5, language=lang,
+        )
+        return " ".join(s.text.strip() for s in segments).strip()

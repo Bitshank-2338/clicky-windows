@@ -280,27 +280,21 @@ class AmbientListener:
 
     def _transcribe_tiny(self, pcm: bytes) -> str:
         """Pad PCM with silence (whisper accuracy degrades on ultra-short clips)."""
-        import tempfile, os
+        from audio.stt.faster_whisper_stt import wav_to_whisper_input
         model = self._get_model()
         pad = bytes(int(SAMPLE_RATE * 0.4) * 2)    # 400ms silence each side
         padded = pad + pcm + pad
         wav = pcm16_to_wav(padded)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav)
-            path = f.name
-        try:
-            segments, _ = model.transcribe(
-                path,
-                beam_size=5,
-                language="en",
-                condition_on_previous_text=False,
-                no_speech_threshold=0.45,
-                temperature=0.0,
-                initial_prompt="Clicky is a helpful AI assistant.",
-            )
-            return " ".join(s.text for s in segments)
-        finally:
-            os.unlink(path)
+        segments, _ = model.transcribe(
+            wav_to_whisper_input(wav),
+            beam_size=5,
+            language="en",
+            condition_on_previous_text=False,
+            no_speech_threshold=0.45,
+            temperature=0.0,
+            initial_prompt="Clicky is a helpful AI assistant.",
+        )
+        return " ".join(s.text for s in segments)
 
     def _get_model(self):
         with self._wake_lock:
