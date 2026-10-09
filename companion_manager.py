@@ -274,6 +274,7 @@ class CompanionManager(QObject):
     sig_copilot_models_done = pyqtSignal(int)             # arg = model count
     sig_models_refreshed    = pyqtSignal(str, int)        # (provider, count)
     sig_ollama_models       = pyqtSignal(dict)            # {"vision": [...], "text": [...]}
+    sig_ollama_selected     = pyqtSignal(str)             # model picked from the tray menu
     sig_ollama_pull_status  = pyqtSignal(str, str)        # (model_name, status_msg)
     sig_arrow               = pyqtSignal(float, float, float, float)
     sig_circle              = pyqtSignal(float, float, float)
@@ -1515,6 +1516,12 @@ class CompanionManager(QObject):
         # Force the provider instance to re-read cfg on next call
         if cfg.llm_provider() == "ollama":
             self._retire_llm()
+            if kind == "vision":
+                # The panel's selection is sent with every question and overrides
+                # the vision slot, so a tray pick has to update it as well or it
+                # would silently do nothing.
+                self._current_model = name
+                self.sig_ollama_selected.emit(name)
 
     def set_custom_instructions(self, text: str):
         """Tray callback — restrict/steer what Clicky helps with. Persists

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from enum import Enum, auto
 from typing import Callable, Optional
 
@@ -148,6 +149,7 @@ class CompanionPanel(QWidget):
     on_push_to_talk_pressed  = pyqtSignal()
     on_push_to_talk_released = pyqtSignal()
     on_model_changed         = pyqtSignal(str)
+    on_ollama_refresh_requested = pyqtSignal()
     on_document_dropped      = pyqtSignal(str)
     _sig_copilot_code        = pyqtSignal(str, str)   # (user_code, verification_uri)
     _sig_copilot_error       = pyqtSignal(str)
@@ -156,6 +158,9 @@ class CompanionPanel(QWidget):
         super().__init__()
         self._state = AppState.IDLE
         self._response_text = ""
+        self._ollama_installed: dict[str, list[str]] = {"vision": [], "text": []}
+        self._ollama_pick: Optional[str] = None
+        self._ollama_polled_at = 0.0
         self._setup_window()
         self._build_ui()
         self._position_bottom_right()
@@ -271,6 +276,9 @@ class CompanionPanel(QWidget):
             "border-radius: 6px; color: rgb(200,200,215); padding: 2px 6px; font-size: 11px;"
         )
         self._populate_models()
+        self._model_combo.activated.connect(
+            lambda _i: self._remember_ollama_pick()
+        )
         # Emit the model id (stored in userData), not the display label
         self._model_combo.currentIndexChanged.connect(
             lambda _idx: self.on_model_changed.emit(
@@ -306,7 +314,9 @@ class CompanionPanel(QWidget):
             except Exception:
                 self._model_combo.addItem("default", userData="default")
         else:   # ollama
-            self._model_combo.addItem(cfg.ollama_model, userData=cfg.ollama_model)
+            self._fill_ollama_models()
+            # A pick made in the tray menu wins over what the dropdown held.
+            previous = self._ollama_pick or previous
         if previous:
             idx = self._model_combo.findData(previous)
             if idx >= 0:
@@ -316,6 +326,54 @@ class CompanionPanel(QWidget):
         # the manager picks it up — important when label != id.
         if self._model_combo.count():
             self.on_model_changed.emit(self._model_combo.currentData() or self._model_combo.currentText())
+
+    def _remember_ollama_pick(self):
+        if cfg.llm_provider() == "ollama":
+            self._ollama_pick = self._model_combo.currentData()
+
+    def _fill_ollama_models(self):
+        """List what is actually installed in Ollama, not just the configured
+        model — otherwise a model the user pulls later can never be chosen here
+        (the panel's selection is what gets sent with every question)."""
+        wanted = cfg.get_ollama_model("vision") or cfg.ollama_model
+        shown = set()
+        for name in self._ollama_installed.get("vision", []):
+            self._model_combo.addItem(name, userData=name)
+            shown.add(name)
+        for name in self._ollama_installed.get("text", []):
+            self._model_combo.addItem(f"{name}  (text only)", userData=name)
+            shown.add(name)
+        if wanted not in shown:
+            label = wanted if not shown else f"{wanted}  (not installed)"
+            self._model_combo.insertItem(0, label, userData=wanted)
+        idx = self._model_combo.findData(wanted)
+        if idx >= 0:
+            self._model_combo.setCurrentIndex(idx)
+
+    def set_ollama_models(self, classified: dict):
+        """Installed Ollama models arrived (startup, panel open, tray refresh)."""
+        self._ollama_installed = {
+            "vision": list(classified.get("vision", [])),
+            "text":   list(classified.get("text", [])),
+        }
+        if cfg.llm_provider() == "ollama":
+            self._set_models_for("ollama")
+
+    def select_ollama_model(self, name: str):
+        """The model was chosen from the tray menu — mirror it here."""
+        self._ollama_pick = name
+        if cfg.llm_provider() == "ollama":
+            self._set_models_for("ollama")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # A model pulled while Clicky was running should appear without a
+        # restart; a throttled re-poll on open keeps the list current.
+        if cfg.llm_provider() == "ollama":
+            now = time.monotonic()
+            if now - self._ollama_polled_at > 5:
+                self._ollama_polled_at = now
+                self.on_ollama_refresh_requested.emit()
 
     def refresh_for_provider(self, provider: str):
         """Called from outside when the active provider is switched at runtime."""

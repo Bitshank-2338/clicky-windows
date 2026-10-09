@@ -330,6 +330,9 @@ def main():
 
     # When the installed-model list arrives, push it into the tray submenu
     manager.sig_ollama_models.connect(tray.set_ollama_models)
+    manager.sig_ollama_models.connect(panel.set_ollama_models)
+    manager.sig_ollama_selected.connect(panel.select_ollama_model)
+    panel.on_ollama_refresh_requested.connect(manager.refresh_ollama_models)
 
     # Surface pull progress as tray toasts so students see download status
     def _on_ollama_pull_status(name: str, status: str):
