@@ -272,6 +272,7 @@ class CompanionManager(QObject):
     sig_point_release       = pyqtSignal()                # end dwell + fly buddy back
     sig_error               = pyqtSignal(str)
     sig_copilot_models_done = pyqtSignal(int)             # arg = model count
+    sig_copilot_models_failed = pyqtSignal(str)           # arg = error text
     sig_models_refreshed    = pyqtSignal(str, int)        # (provider, count)
     sig_ollama_models       = pyqtSignal(dict)            # {"vision": [...], "text": [...]}
     sig_ollama_selected     = pyqtSignal(str)             # model picked from the tray menu
@@ -1495,6 +1496,7 @@ class CompanionManager(QObject):
             self.sig_copilot_models_done.emit(len(models))
         except Exception as e:
             self.sig_error.emit(f"Copilot model refresh failed: {e}")
+            self.sig_copilot_models_failed.emit(str(e))
 
     # ── Ollama model management ──────────────────────────────────────────────
 

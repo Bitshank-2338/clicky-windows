@@ -89,6 +89,7 @@ def _copilot_login_flow(tray, panel, manager):
             return
 
         tray.show_notification("GitHub Copilot", "Signed in! Refreshing model list…")
+        panel.show_copilot_status("✅ Signed in to GitHub Copilot.\n\nLoading the models on your plan…")
         try:
             manager.refresh_copilot_models()
         except Exception as e:
@@ -303,13 +304,32 @@ def main():
 
     # When the live model list arrives, repopulate the panel + show a toast
     def _on_copilot_models_done(count: int):
+        from ai.github_copilot_provider import blocked_models
         if cfg.llm_provider() == "copilot":
             panel.refresh_for_provider("copilot")
+        blocked = blocked_models()
+        msg = f"{count} models are usable on your plan."
+        if blocked:
+            shown = ", ".join(blocked[:4]) + (" …" if len(blocked) > 4 else "")
+            msg += (
+                f"\n\nGitHub lists {len(blocked)} newer models as enabled "
+                f"({shown}) but does not let your Copilot plan call them, so "
+                f"they are hidden. Another provider (Claude, OpenAI, Gemini) "
+                f"will have them."
+            )
+        panel.show_copilot_status("✅ Signed in to GitHub Copilot.\n\n" + msg)
         tray.show_notification(
             "GitHub Copilot",
-            f"Loaded {count} models from your seat. Free models are tagged "
-            f"in the Model dropdown."
+            f"Loaded {count} usable models."
+            + (f" {len(blocked)} newer ones aren't available on your plan." if blocked else ""),
         )
+
+    def _on_copilot_models_failed(err: str):
+        panel.show_copilot_error(
+            f"Signed in successfully, but the model list could not be loaded:\n"
+            f"{err}\n\nTry Tray → Model → Refresh Copilot models."
+        )
+    manager.sig_copilot_models_failed.connect(_on_copilot_models_failed)
     manager.sig_copilot_models_done.connect(_on_copilot_models_done)
 
     # Live model auto-refresh for Claude / OpenAI / Gemini (30-day cache).

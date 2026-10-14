@@ -153,6 +153,7 @@ class CompanionPanel(QWidget):
     on_document_dropped      = pyqtSignal(str)
     _sig_copilot_code        = pyqtSignal(str, str)   # (user_code, verification_uri)
     _sig_copilot_error       = pyqtSignal(str)
+    _sig_copilot_status      = pyqtSignal(str)        # sign-in progress / success message
 
     def __init__(self):
         super().__init__()
@@ -167,6 +168,7 @@ class CompanionPanel(QWidget):
         # Wire internal thread-safe signals → main-thread slots
         self._sig_copilot_code.connect(self._on_copilot_code)
         self._sig_copilot_error.connect(self._on_copilot_error)
+        self._sig_copilot_status.connect(self._on_copilot_status)
 
     def _setup_window(self):
         self.setWindowFlags(
@@ -427,6 +429,12 @@ class CompanionPanel(QWidget):
         """Thread-safe version of showing a Copilot login error."""
         self._sig_copilot_error.emit(error)
 
+    def show_copilot_status(self, message: str):
+        """Thread-safe: replace the sign-in instructions with a progress or
+        success message. Without this the "Waiting for Copilot authorization"
+        text stayed on screen after a successful sign-in."""
+        self._sig_copilot_status.emit(message)
+
     # ── Private slots (always run on Qt main thread) ──────────────────────────
 
     def _on_copilot_code(self, user_code: str, verification_uri: str):
@@ -446,6 +454,12 @@ class CompanionPanel(QWidget):
     def _on_copilot_error(self, error: str):
         self._response_text = f"Copilot login failed:\n\n{error}"
         self._response_label.setText(self._response_text)
+        self._status_label.setText(STATE_LABELS[self._state])
+
+    def _on_copilot_status(self, message: str):
+        self._response_text = message
+        self._response_label.setText(message)
+        self._status_label.setText(STATE_LABELS[self._state])
 
     # ── Mouse drag to reposition ──────────────────────────────────────────────
     def mousePressEvent(self, event):

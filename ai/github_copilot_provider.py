@@ -166,14 +166,10 @@ async def device_login(open_browser: bool = True,
                 _token_path().write_text(json.dumps({"access_token": token}))
                 _log_login(f"✅ Signed in after {poll_count} polls. Token saved.")
                 print("✅  Signed in. Token saved to", _token_path())
-                # Eagerly fetch the model list so the panel reflects what
-                # the user actually has access to *right now*.
-                try:
-                    models = await refresh_models_to_cache()
-                    print(f"   Found {len(models)} chat models on your seat. "
-                          f"Free: {len([m for m in models if m['multiplier']==0])}.")
-                except Exception as e:
-                    print(f"   (Could not refresh model list: {e})")
+                # Return right away. The model list is fetched (and every model
+                # probed) by the caller in the background: doing it here kept the
+                # panel on "Waiting for authorization" for the whole probe, and the
+                # caller then fetched it a second time.
                 return token
             if body.get("error") == "authorization_pending":
                 if poll_count % 6 == 0:   # log roughly every 30s
@@ -437,11 +433,19 @@ async def refresh_models_to_cache(verify: bool = True) -> list[dict]:
     flat = [_normalise_model(m) for m in raw if m.get("id")]
     usable = _usable_models(flat)
 
+    blocked: list[str] = []
     if verify and usable:
         verified = await _verify_models(usable)
         # If every probe failed the network is probably down — trust the
         # catalogue rather than caching nothing.
         if verified:
+            ok = {m["id"] for m in verified}
+            # GitHub marks a model policy "enabled" even when the plan can't
+            # call it (a free Student seat reports newer models as enabled and
+            # then answers model_not_supported). Remember them so the UI can say
+            # so instead of leaving the user wondering where the models went.
+            blocked = [m["id"] for m in usable
+                       if m["id"] not in ok and m["policy"] == "enabled"]
             usable = verified
 
     # Never cache an empty list — that's the state that made the panel look
@@ -454,7 +458,7 @@ async def refresh_models_to_cache(verify: bool = True) -> list[dict]:
                f"https://github.com/settings/copilot)." if blocked else ".")
         )
 
-    blob = {"fetched_at": time.time(), "models": usable}
+    blob = {"fetched_at": time.time(), "models": usable, "blocked": blocked}
     _models_cache_path().write_text(json.dumps(blob, indent=2))
     return usable
 
@@ -497,6 +501,15 @@ def cached_models() -> list[dict]:
         except Exception:
             pass
     return _fallback_models()
+
+
+def blocked_models() -> list[str]:
+    """Models GitHub lists as enabled that this seat's plan could not call at
+    the last refresh (see refresh_models_to_cache)."""
+    try:
+        return list(json.loads(_models_cache_path().read_text()).get("blocked") or [])
+    except Exception:
+        return []
 
 
 def cache_is_stale() -> bool:
@@ -557,7 +570,9 @@ def model_label(model_id: str) -> str:
         if m["id"] == model_id:
             mult = m.get("multiplier")
             if mult is None:
-                tag = m.get("category") or "chat"
+                tag = m.get("category")
+                if not tag:
+                    return model_id        # nothing useful to add
             elif mult == 0:
                 tag = "free"
             elif mult == 1:
@@ -568,10 +583,34 @@ def model_label(model_id: str) -> str:
     return model_id
 
 
+_DATED_ID = re.compile(r"-(\d{4}-\d{2}-\d{2}|\d{4})(-preview)?$")
+_ANCIENT_ID = re.compile(r"^(gpt-3\.5|gpt-4(-|$))")
+
+
+def _picker_models(models: list[dict]) -> list[dict]:
+    """The models worth showing in a dropdown.
+
+    A seat can report a dozen entries for three real models: gpt-4o plus four
+    dated snapshots of it, gpt-3.5-turbo and its dated copy, the retired
+    gpt-4 preview. Hide a dated snapshot when its plain alias is also listed,
+    and hide the pre-4o generations, as long as that leaves something to pick.
+    """
+    ids = {m["id"] for m in models}
+    keep = []
+    for m in models:
+        mid = m["id"]
+        if _DATED_ID.search(mid) and _DATED_ID.sub("", mid) in ids:
+            continue
+        if _ANCIENT_ID.match(mid):
+            continue
+        keep.append(m)
+    return keep or models
+
+
 def sorted_model_ids() -> list[str]:
-    """All Copilot model IDs, cheapest first, vision-capable ahead of blind."""
+    """Copilot model IDs for the picker, cheapest first, vision ahead of blind."""
     models = sorted(
-        cached_models(),
+        _picker_models(cached_models()),
         key=lambda m: (_cost_rank(m), not m["vision"], m["id"]),
     )
     return [m["id"] for m in models]
