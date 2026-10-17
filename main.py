@@ -67,37 +67,37 @@ def _copilot_login_flow(tray, panel, manager):
     def _on_code(user_code: str, verification_uri: str):
         """Called as soon as the device code arrives — display it in the panel."""
         msg = (
-            f"GitHub Copilot Sign-In\n\n"
-            f"1. Visit: {verification_uri}\n"
-            f"2. Enter code:  {user_code}\n"
-            f"3. Click Authorize — Clicky will sign in automatically."
+            f"GitHub Copilot-ში შესვლა\n\n"
+            f"1. გახსენით: {verification_uri}\n"
+            f"2. შეიყვანეთ კოდი:  {user_code}\n"
+            f"3. დააჭირეთ Authorize-ს — კლიკი ავტომატურად შევა."
         )
         # Show in panel (cross-thread safe via Qt signal)
         panel.show_copilot_code(user_code, verification_uri)
-        tray.show_notification("GitHub Copilot — enter this code", user_code)
+        tray.show_notification("GitHub Copilot — შეიყვანეთ ეს კოდი", user_code)
 
     def _worker():
         # Sign-in and model discovery are reported separately on purpose: the
         # device flow was succeeding and saving a valid token, then a failing
-        # model refresh surfaced as "Copilot login failed" and sent users off
+        # model refresh surfaced as "Copilot-ში შესვლა ვერ მოხერხდა" and sent users off
         # re-authorising something that was never broken.
         try:
             asyncio.run(device_login(on_code=_on_code))
         except Exception as e:
-            tray.show_notification("Copilot login failed", str(e))
+            tray.show_notification("Copilot-ში შესვლა ვერ მოხერხდა", str(e))
             panel.show_copilot_error(str(e))
             return
 
-        tray.show_notification("GitHub Copilot", "Signed in! Refreshing model list…")
+        tray.show_notification("GitHub Copilot", "შესვლა შესრულდა! მოდელების სია ახლდება…")
         try:
             manager.refresh_copilot_models()
         except Exception as e:
             tray.show_notification(
-                "Copilot signed in — model list unavailable", str(e)
+                "Copilot-ში შესულია — მოდელების სია მიუწვდომელია", str(e)
             )
             panel.show_copilot_error(
-                f"Signed in successfully, but the model list could not be "
-                f"loaded:\n{e}\n\nTry Tray → Model → Refresh Copilot models."
+                f"შესვლა შესრულდა, მაგრამ მოდელების სია ვერ "
+                f"ჩაიტვირთა:\n{e}\n\nსცადეთ: ხატულა → მოდელი → Copilot-ის მოდელების განახლება."
             )
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -159,6 +159,9 @@ def main():
     # Response streaming
     manager.sig_response_chunk.connect(panel.append_response_chunk)
 
+    # Recognised speech → large on-screen caption, shown before the answer
+    manager.sig_transcript.connect(overlay.show_caption)
+
     # Audio level → cursor waveform (+ panel meter)
     manager.sig_audio_level.connect(panel.set_audio_level)
     manager.sig_audio_level.connect(overlay.set_audio_level)
@@ -185,7 +188,7 @@ def main():
     ) / "Clicky" / "clicky.log"
     manager.sig_error.connect(
         lambda e: tray.show_notification(
-            "Clicky error", f"{e}\n\nFull details: {_log_hint}"
+            "კლიკი — შეცდომა", f"{e}\n\nდეტალები: {_log_hint}"
         )
     )
 
@@ -195,9 +198,9 @@ def main():
     def _on_doc_dropped(path: str):
         ok = manager.attach_document(path)
         tray.show_notification(
-            "Document Attached" if ok else "Attach failed",
-            f"{path}\nAsk Clicky about it now." if ok else
-            "Couldn't read that file."
+            "დოკუმენტი მიმაგრებულია" if ok else "მიმაგრება ვერ მოხერხდა",
+            f"{path}\nახლა შეგიძლიათ კლიკის ჰკითხოთ მის შესახებ." if ok else
+            "ფაილის წაკითხვა ვერ მოხერხდა."
         )
     panel.on_document_dropped.connect(_on_doc_dropped)
 
@@ -219,14 +222,14 @@ def main():
     def _record_start():
         out = manager.start_recording()
         tray.show_notification(
-            "Lesson Recording",
-            f"Recording to:\n{out}" if out else
-            "Failed — install imageio[ffmpeg]: pip install imageio imageio-ffmpeg"
+            "გაკვეთილის ჩაწერა",
+            f"ჩაიწერება აქ:\n{out}" if out else
+            "ვერ მოხერხდა — დააყენეთ imageio[ffmpeg]: pip install imageio imageio-ffmpeg"
         )
     def _record_stop():
         out = manager.stop_recording()
         if out:
-            tray.show_notification("Lesson saved", out)
+            tray.show_notification("გაკვეთილი შენახულია", out)
     tray.on_record_start.connect(_record_start)
     tray.on_record_stop.connect(_record_stop)
     manager.sig_recording_state.connect(
@@ -237,16 +240,16 @@ def main():
     def _wf_start():
         ok = manager.workflow_start()
         tray.show_notification(
-            "Workflow Capture",
-            "Recording your clicks + keys. Stop from tray when done."
-            if ok else "Install pynput: pip install pynput"
+            "მოქმედებების ჩაწერა",
+            "იწერება თქვენი დაწკაპუნებები და კლავიშები. დასრულებისას შეაჩერეთ ხატულიდან."
+            if ok else "დააყენეთ pynput: pip install pynput"
         )
     def _wf_stop():
         summary = manager.workflow_stop()
         if summary:
             tray.show_notification(
-                "Workflow Captured",
-                "Sent to Clicky as context. Ask: 'what did I just do?'"
+                "მოქმედებები ჩაწერილია",
+                "კლიკის გადაეცა. ჰკითხეთ: „რა გავაკეთე ახლა?“"
             )
             # Stash as an attached doc so the next question sees it
             manager._attached_docs.append(("recorded_workflow.txt", summary))
@@ -257,8 +260,8 @@ def main():
     tray.on_collab_start.connect(manager.collab_start_host)
     def _collab_join():
         from PyQt6.QtWidgets import QInputDialog
-        code, ok = QInputDialog.getText(None, "Join Live Session",
-                                        "Enter 6-character session code:")
+        code, ok = QInputDialog.getText(None, "სესიაში შესვლა",
+                                        "შეიყვანეთ სესიის 6-სიმბოლოიანი კოდი:")
         if ok and code:
             manager.collab_join(code.strip())
     tray.on_collab_join.connect(_collab_join)
@@ -278,15 +281,15 @@ def main():
     def _attach_doc():
         from PyQt6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getOpenFileName(
-            None, "Attach a document for Clicky",
-            "", "Documents (*.pdf *.docx *.txt *.md *.csv)"
+            None, "დოკუმენტის მიმაგრება კლიკისთვის",
+            "", "დოკუმენტები (*.pdf *.docx *.txt *.md *.csv)"
         )
         if path:
             ok = manager.attach_document(path)
             tray.show_notification(
-                "Document Attached",
-                f"{path}\nAsk Clicky about it now." if ok else
-                "Couldn't read that file."
+                "დოკუმენტი მიმაგრებულია",
+                f"{path}\nახლა შეგიძლიათ კლიკის ჰკითხოთ მის შესახებ." if ok else
+                "ფაილის წაკითხვა ვერ მოხერხდა."
             )
     tray.on_attach_doc.connect(_attach_doc)
 
@@ -294,7 +297,7 @@ def main():
         manager.set_active_provider(name)
         panel.refresh_for_provider(name)       # repopulate model dropdown + badge
         tray.rebuild_menu()                    # tick mark moves to new provider
-        tray.show_notification("Clicky", f"Switched to {name}")
+        tray.show_notification("კლიკი", f"გადართულია: {name}")
 
     tray.on_switch_provider.connect(_switch)
     tray.on_stop.connect(manager.stop)
@@ -307,8 +310,8 @@ def main():
             panel.refresh_for_provider("copilot")
         tray.show_notification(
             "GitHub Copilot",
-            f"Loaded {count} models from your seat. Free models are tagged "
-            f"in the Model dropdown."
+            f"ჩაიტვირთა {count} მოდელი. უფასო მოდელები მონიშნულია "
+            f"მოდელის სიაში."
         )
     manager.sig_copilot_models_done.connect(_on_copilot_models_done)
 
@@ -363,7 +366,7 @@ def main():
             manager.set_active_provider(provider)
             panel.refresh_for_provider(provider)
             tray.rebuild_menu()
-            tray.show_notification("Clicky", f"API keys saved — using {provider}")
+            tray.show_notification("კლიკი", f"API გასაღებები შენახულია — გამოიყენება {provider}")
 
         dlg.keys_saved.connect(_applied)
         dlg.show()
@@ -407,13 +410,13 @@ def main():
             report.append(traceback.format_exc())
         try:
             out.write_text("\n".join(report), encoding="utf-8")
-            tray.show_notification("Diagnostics saved", str(out))
+            tray.show_notification("დიაგნოსტიკა შენახულია", str(out))
             try:
                 os.startfile(str(out))
             except Exception:
                 pass
         except Exception as e:
-            tray.show_notification("Diagnostics failed", str(e))
+            tray.show_notification("დიაგნოსტიკა ვერ მოხერხდა", str(e))
     tray.on_diagnostics.connect(_save_diagnostics)
 
     tray.on_quit.connect(lambda: (tray.hide_icon(), manager.shutdown(), app.quit()))
@@ -437,11 +440,11 @@ def main():
     providers = cfg.describe()
     _hk = "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))
     tray.show_notification(
-        "Clicky is running",
-        (f"Say 'Clicky' or press {_hk}  |  LLM: {providers['llm']}"
+        "კლიკი ჩართულია",
+        (f"თქვით „კლიკი“ ან დააჭირეთ {_hk}"
          if cfg.ambient_mic() else
-         f"Press {_hk}, ask your question, and Clicky answers when you stop "
-         f"talking  |  LLM: {providers['llm']}"),
+         f"დააჭირეთ {_hk}, დასვით კითხვა — როცა გაჩერდებით, "
+         f"კლიკი გიპასუხებთ"),
     )
 
     # ── First-run setup wizard ────────────────────────────────────────────────

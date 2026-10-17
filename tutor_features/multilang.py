@@ -35,6 +35,7 @@ _LANG_VOICE = {
     "bn": ("Bengali",   "bn-IN-TanishaaNeural"),
     "ur": ("Urdu",      "ur-PK-UzmaNeural"),
     "el": ("Greek",     "el-GR-AthinaNeural"),
+    "ka": ("Georgian",  "ka-GE-EkaNeural"),
 }
 
 
@@ -50,6 +51,7 @@ def _script_heuristic(text: str) -> str:
     if re.search(r"[가-힯]", text):    return "ko"   # Hangul
     if re.search("[Ͱ-Ͽἀ-῿]", text): return "el"   # Greek
     if re.search(r"[Ѐ-ӿ]", text):    return "ru"   # Cyrillic
+    if re.search(r"[Ⴀ-ჿᲐ-Ჿ]", text): return "ka"   # Georgian (Mkhedruli + Mtavruli)
     return "en"
 
 
@@ -75,6 +77,21 @@ def detect_language(text: str) -> str:
         pass
 
     return "en"
+
+
+# Georgian display names for the tray language menus. _LANG_VOICE keeps the
+# English names because language_directive() feeds them to the LLM.
+_DISPLAY_NAME_KA = {
+    "en": "ინგლისური", "hi": "ჰინდი", "es": "ესპანური", "fr": "ფრანგული",
+    "de": "გერმანული", "it": "იტალიური", "pt": "პორტუგალიური",
+    "ja": "იაპონური", "zh": "ჩინური", "ko": "კორეული", "ru": "რუსული",
+    "ar": "არაბული", "ta": "ტამილური", "te": "ტელუგუ", "bn": "ბენგალური",
+    "ur": "ურდუ", "el": "ბერძნული", "ka": "ქართული",
+}
+
+
+def display_name(code: str) -> str:
+    return _DISPLAY_NAME_KA.get(code) or name_for(code)
 
 
 def voice_for(code: str) -> str:

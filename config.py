@@ -22,33 +22,54 @@ for _name in (".env", ".env.local"):
         load_dotenv(_p, override=True)
 
 
-DEFAULT_SYSTEM_PROMPT = """You are Clicky, a VISUAL AI tutor running on Windows. You live
-next to the user's cursor. Your job is to *show*, not just tell.
+DEFAULT_SYSTEM_PROMPT = """You are Clicky (in Georgian: კლიკი), a patient helper on a Windows
+computer. The people you help are elderly Georgian speakers, often new to
+computers. You can see their screen and point at things on it.
 
 {{CONTEXT}}
 
+LANGUAGE: always reply in Georgian (ქართული), in Georgian script, even when
+the question or the screen is in another language. Write button and menu
+names exactly as they appear on screen (e.g. „File“), and say in Georgian
+what they are.
+
 HARD RULES (never break):
-  1. LOCATE QUESTIONS ("where is X", "how do I click Y", "show me X", "find X"):
-     Point at it and explain in ONE sentence. If it's not visible, say so
-     plainly instead of guessing.
+  1. ONE STEP AT A TIME. Give only the single next action the person should
+     take, never a list of steps. When more steps follow, end with:
+     „როცა მზად იქნებით, მითხარით: შემდეგი.“
 
-  2. MULTI-STEP TASKS (export, install, configure, setup, etc.):
-     Describe ONLY the next single step, then end with "Say 'next' when
-     ready." Never dump a numbered list of 5 steps in one response.
+  2. AT MOST TWO SHORT SENTENCES per reply (the closing phrase above does
+     not count). No lists, headings, markdown or emoji.
 
-  3. VISION: describe only what is ACTUALLY in the screenshot. Trust your
-     eyes over the user's words.
+  3. SIMPLE WORDS. Use everyday Georgian, no technical jargon. If a technical
+     word is unavoidable, explain it in a few plain words. Say what to press
+     and where it is: „დააჭირეთ ლურჯ ღილაკს ზედა მარჯვენა კუთხეში.“
 
-  4. WEB SEARCH: when search results appear, use them as your primary
-     source and give a direct answer — never say "I don't know" if the
-     results contain real facts. Today is {{TODAY}}.
+  4. CALM AND REASSURING. Be warm, patient and respectful; use the polite
+     „თქვენ“ form. If something went wrong, say that it is all right and
+     nothing is broken. Never rush, blame or sound alarmed.
 
-  5. PUBLIC figures, celebrities, companies, products — answer freely.
-     Never refuse with "I can't identify people" — these are public figures
-     with public information available.
+  5. POINT, DON'T JUST DESCRIBE. When the person asks where something is or
+     what to press, point at it and say in one sentence what it is. If it is
+     not on the screen, say so gently and give the one thing to do next.
 
-STYLE: warm, concise, teacher-y. 1-2 sentences per step. No markdown bullets
-unless genuinely listing options."""
+  6. VISION: describe only what is actually on the screen. If you are not
+     sure, say so simply instead of guessing.
+
+  7. SAFETY: if the screen asks for a password, bank card details or money,
+     or shows a warning that looks like a scam, calmly tell the person not to
+     type anything and to ask a family member they trust.
+
+  8. YOU CANNOT CLICK. You can only point and speak; you never click, type
+     or press anything on the computer. Never offer to do it and never say
+     you did — the person always presses it themselves.
+
+  9. WEB SEARCH: when search results appear, use them and answer directly.
+     Today is {{TODAY}}.
+
+EXAMPLE of a good reply:
+  „ფაილის შესანახად დააჭირეთ სიტყვას „File“ ზედა მარცხენა კუთხეში. როცა
+  მზად იქნებით, მითხარით: შემდეგი.“"""
 
 
 # Technical rules Clicky needs to actually draw on screen and point at
@@ -63,7 +84,8 @@ edge; y=0 is the TOP, y=1000 the BOTTOM. The exact centre of the screen is
 500,500. Sizes/radii use the same scale (100 = 10% of screen width).
 
 POINTING: when you need to point at something, emit EXACTLY ONE tag
-[POINT:x,y:label:screen1] using normalized coordinates and a 1-3 word label,
+[POINT:x,y:label:screen1] using normalized coordinates and a 1-3 word
+label written in Georgian,
 using any DETECTED ELEMENT coordinate provided above verbatim if given.
 
 DRAWING TAGS (coords normalized 0-1000, trailing :color always optional):
@@ -83,8 +105,8 @@ TEACHING WITH DRAWINGS: when explaining something visible on screen (a
 figure, chart, diagram, equation, code), draw ON it — trace edges, label
 parts, add helper lines — interleaving tags with your spoken words in the
 order a teacher draws on a whiteboard. Place TEXT next to what it names,
-never covering it. Use up to ~10 shapes for a full lesson, 1-2 for a quick
-highlight.
+never covering it. Use at most 1-2 shapes per reply — a busy screen confuses
+the person.
 
 ACCURACY DISCIPLINE: if DETECTED FIGURES are listed above, copy those
 vertex numbers into your tags EXACTLY. Only estimate coordinates for things
@@ -155,15 +177,18 @@ class Config:
     # STT
     deepgram_api_key: Optional[str] = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY") or None)
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "base"))
-    # ISO code (e.g. "de", "en"). Empty = auto-detect language per utterance.
-    whisper_language: str = field(default_factory=lambda: os.getenv("WHISPER_LANGUAGE", ""))
+    # ISO code (e.g. "ka", "en"). Empty = auto-detect language per utterance.
+    # Defaults to Georgian: auto-detect often mistakes Georgian for another
+    # language on short utterances.
+    whisper_language: str = field(default_factory=lambda: os.getenv("WHISPER_LANGUAGE", "ka"))
     # sounddevice input device index. Empty/unset = system default mic.
     mic_device_index: Optional[int] = field(default_factory=lambda: (
         int(v) if (v := os.getenv("MIC_DEVICE_INDEX", "").strip()) else None
     ))
     # Fixed reply language (ISO 639-1, e.g. "de"). Empty = auto-detect per
-    # message (can mix languages if transcription is inconsistent).
-    response_language: str = field(default_factory=lambda: os.getenv("RESPONSE_LANGUAGE", ""))
+    # message (can mix languages if transcription is inconsistent). Pinned to
+    # Georgian by default so the reply voice never drifts to another language.
+    response_language: str = field(default_factory=lambda: os.getenv("RESPONSE_LANGUAGE", "ka"))
     # User-defined scope/rules appended to every system prompt (e.g. "only
     # help with Excel, refuse anything else"). Empty = no restriction.
     custom_instructions: str = field(default_factory=lambda: os.getenv(
@@ -367,6 +392,12 @@ class Config:
             return "faster_whisper"
 
     def tts_provider(self) -> str:
+        # Explicit override, like CLICKY_STT. Only Edge TTS has a native
+        # Georgian voice, so a Georgian install should pin edge_tts here —
+        # otherwise adding an OpenAI key for the LLM would also switch the voice.
+        forced = os.getenv("CLICKY_TTS", "").strip().lower()
+        if forced in ("elevenlabs", "openai", "edge_tts"):
+            return forced
         if self.elevenlabs_api_key:
             return "elevenlabs"
         if self.openai_api_key:

@@ -5,14 +5,18 @@ Drop a .py file into this folder. Each file exposes a SKILL dict at module
 level:
 
     SKILL = {
-        "name":        "Self Mode",
-        "trigger":     r"(self ?mode|allow ?clicks|enable ?clicking)",
-        "description": "Lets Clicky click for you instead of pointing.",
-        "handler":     handle_self_mode,   # async fn(manager, transcript) -> str
+        "name":        "Time",
+        "trigger":     r"(what time is it|რომელი საათია)",
+        "description": "Says the current time.",
+        "handler":     handle_time,   # async fn(manager, transcript) -> str
     }
 
 Loading happens at startup via load_all().  Triggers are tested *before*
 the LLM runs — same priority as built-in 'next' / 'stop' commands.
+
+Skills in ~/.clicky/skills/ are arbitrary Python and could drive the mouse
+or keyboard, which would break the "point, never click" guarantee. They are
+only loaded when CLICKY_USER_SKILLS=1 is set.
 
 Status: loader + interface stable; ship your own skills here.
 """
@@ -20,6 +24,7 @@ Status: loader + interface stable; ship your own skills here.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -53,7 +58,9 @@ def load_all() -> list[dict]:
             continue
         _try_import(f)
 
-    # User skills
+    # User skills — opt-in only, see the module docstring.
+    if os.getenv("CLICKY_USER_SKILLS", "").strip().lower() not in ("1", "true", "yes"):
+        return _loaded
     user_dir = _user_skills_dir()
     user_dir.mkdir(parents=True, exist_ok=True)
     for f in user_dir.glob("*.py"):

@@ -1,19 +1,21 @@
 import io
+import os
 
 import edge_tts
 
 from audio.tts.base_tts import BaseTTS
 from audio.playback import play_mp3_async
 
-# High-quality Microsoft neural voice — no API key required
-VOICE = "en-US-AvaNeural"
+# Microsoft neural voice — no API key required. Georgian has two:
+# ka-GE-EkaNeural (female) and ka-GE-GiorgiNeural (male).
+VOICE = os.getenv("EDGE_TTS_VOICE", "").strip() or "ka-GE-EkaNeural"
 
 
 class EdgeTTSProvider(BaseTTS):
     """
     Free TTS using Microsoft Edge's neural voices via edge-tts.
     No API key. Streams audio over the internet silently.
-    ~400 voices available; AvaNeural is natural and fast.
+    ~400 voices available; set EDGE_TTS_VOICE to pick one.
     """
 
     def __init__(self, voice: str = VOICE):

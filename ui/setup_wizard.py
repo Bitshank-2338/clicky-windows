@@ -84,7 +84,7 @@ class SetupWizard(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Clicky Setup")
+        self.setWindowTitle("კლიკის დაყენება")
         self.setModal(False)
         self.setMinimumSize(600, 420)
         self.setStyleSheet("""
@@ -128,7 +128,7 @@ class SetupWizard(QDialog):
         layout.setContentsMargins(32, 28, 32, 24)
         layout.setSpacing(14)
 
-        self.title = QLabel("Welcome to Clicky")
+        self.title = QLabel("მოგესალმებათ კლიკი")
         self.title.setObjectName("title")
         layout.addWidget(self.title)
 
@@ -154,7 +154,7 @@ class SetupWizard(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self.skip_btn = QPushButton("Skip")
+        self.skip_btn = QPushButton("გამოტოვება")
         self.skip_btn.setObjectName("secondary")
         self.skip_btn.clicked.connect(self._on_skip)
         btn_row.addWidget(self.skip_btn)
@@ -168,7 +168,7 @@ class SetupWizard(QDialog):
         self.alt_btn.hide()
         btn_row.addWidget(self.alt_btn)
 
-        self.action_btn = QPushButton("Get started")
+        self.action_btn = QPushButton("დაწყება")
         self.action_btn.clicked.connect(self._on_action)
         btn_row.addWidget(self.action_btn)
 
@@ -187,69 +187,66 @@ class SetupWizard(QDialog):
         self.action_btn.setEnabled(True)
         self.skip_btn.setEnabled(True)
         self.skip_btn.show()
-        self.skip_btn.setText("Skip")
+        self.skip_btn.setText("გამოტოვება")
 
         if step == "welcome":
-            self.title.setText("Meet Clicky")
+            self.title.setText("გაიცანით კლიკი")
             self.subtitle.setText(
-                "Clicky is an AI tutor that lives next to your cursor and can see "
-                "your screen — so it can point at things instead of just describing "
-                "them.\n\n"
-                f"•  Hold {_pretty_hotkey()} anywhere in Windows, or just say "
-                "\"Clicky\", then ask your question out loud.\n"
-                "•  Clicky answers by speaking, and draws arrows, circles and "
-                "labels directly on your screen.\n"
-                "•  Ask it about whatever you're looking at — a PDF, an error "
-                "message, a chart, a settings page.\n"
-                "•  Everything lives in the tray icon: modes, models, and "
-                "settings.\n\n"
-                "Next, pick the AI engine that powers it. Takes about a minute."
+                "კლიკი არის AI მასწავლებელი, რომელიც კურსორთან ცხოვრობს და "
+                "თქვენს ეკრანს ხედავს — ამიტომ საჭირო ადგილს პირდაპირ გაჩვენებთ.\n\n"
+                f"•  დააჭირეთ {_pretty_hotkey()} ან უბრალოდ თქვით „კლიკი“, "
+                "შემდეგ ხმამაღლა დასვით კითხვა.\n"
+                "•  კლიკი ხმით გიპასუხებთ და ეკრანზე ისრებს, წრეებს და "
+                "წარწერებს დახატავს.\n"
+                "•  ჰკითხეთ ყველაფერი, რასაც ეკრანზე ხედავთ — დოკუმენტი, "
+                "შეცდომის შეტყობინება, პარამეტრების გვერდი.\n"
+                "•  ყველა პარამეტრი ხატულაშია, საათის გვერდით.\n\n"
+                "ახლა აირჩიეთ AI ძრავა. ეს დაახლოებით ერთ წუთს წაიღებს."
             )
-            self.action_btn.setText("Continue")
-            self.skip_btn.setText("Skip setup")
+            self.action_btn.setText("გაგრძელება")
+            self.skip_btn.setText("დაყენების გამოტოვება")
 
         elif step == "engine":
-            self.title.setText("Choose your AI engine")
+            self.title.setText("აირჩიეთ AI ძრავა")
             self.subtitle.setText(
-                "Free and offline — Ollama runs the AI on your own computer. "
-                "No account, no API key, nothing leaves your machine. It needs a "
-                "one-time model download of a couple of GB.\n\n"
-                "Or bring your own key — Claude, OpenAI or Gemini. Faster and "
-                "smarter, but the provider charges you and your screen is sent to "
-                "their servers.\n\n"
-                "You can change this at any time from the tray menu."
+                "უფასო და ინტერნეტის გარეშე — Ollama AI-ს თქვენს კომპიუტერზე უშვებს. "
+                "არც ანგარიში, არც API გასაღები, არაფერი გადის კომპიუტერიდან. "
+                "საჭიროა მოდელის ერთჯერადი ჩამოტვირთვა (რამდენიმე GB).\n\n"
+                "ან გამოიყენეთ საკუთარი გასაღები — Claude, OpenAI ან Gemini. უფრო "
+                "სწრაფი და ჭკვიანი, მაგრამ ფასიანია და ეკრანის სურათი მათ "
+                "სერვერებზე იგზავნება.\n\n"
+                "ამის შეცვლა ნებისმიერ დროს შეგიძლიათ ხატულის მენიუდან."
             )
-            self.action_btn.setText("Use Ollama — free")
-            self.alt_btn.setText("I'll use an API key")
+            self.action_btn.setText("Ollama — უფასოდ")
+            self.alt_btn.setText("API გასაღებს გამოვიყენებ")
             self.alt_btn.show()
 
         elif step == "detect":
-            self.title.setText("Checking for Ollama…")
+            self.title.setText("Ollama-ს ვამოწმებ…")
             self.subtitle.setText(
-                "Looking for an existing Ollama installation before downloading "
-                "anything."
+                "ჩამოტვირთვამდე ვამოწმებ, უკვე დაყენებულია თუ არა Ollama."
             )
             self.action_btn.setEnabled(False)
             self.skip_btn.setEnabled(False)
-            self.status.setText("Checking…")
+            self.status.setText("მოწმდება…")
 
         elif step == "install":
-            self.title.setText("Install Ollama")
+            self.title.setText("Ollama-ს დაყენება")
             self.subtitle.setText(
-                "Ollama isn't on this computer yet. It's the engine that runs the "
-                "AI locally — we'll download and install it for you (≈700 MB)."
+                "ამ კომპიუტერზე Ollama ჯერ არ არის. ეს არის ძრავა, რომელიც AI-ს "
+                "ადგილზე უშვებს — ჩვენ ჩამოვტვირთავთ და დავაყენებთ (≈700 MB)."
             )
-            self.action_btn.setText("Install Ollama")
+            self.action_btn.setText("Ollama-ს დაყენება")
 
         elif step == "installing":
-            self.title.setText("Installing Ollama…")
+            self.title.setText("Ollama ყენდება…")
             self.subtitle.setText(
-                "Downloading the official installer from ollama.com, then launching "
-                "it. Click through any UAC / installer prompts that appear."
+                "ოფიციალური ინსტალერი ჩამოიტვირთება ollama.com-დან და გაეშვება. "
+                "დაეთანხმეთ ყველა გამოჩენილ ფანჯარას (UAC / ინსტალერი)."
             )
             self.action_btn.setEnabled(False)
             self.skip_btn.setEnabled(False)
-            self.status.setText("Starting download…")
+            self.status.setText("ჩამოტვირთვა იწყება…")
             self.progress.show()
 
         elif step == "text_model":
@@ -258,71 +255,71 @@ class SetupWizard(QDialog):
                 # One multimodal model covers both jobs, so there is only one
                 # download to offer — not a text step followed by a vision step
                 # that asks for the same file again.
-                self.title.setText("Download Clicky's AI model")
+                self.title.setText("კლიკის AI მოდელის ჩამოტვირთვა")
                 self.subtitle.setText(
-                    f"Pulling {name} (≈{_size_hint(name)}). It answers your questions and "
-                    f"reads your screen — pointing, screenshots, charts — so this is "
-                    f"the only model you need."
+                    f"ჩამოიტვირთება {name} (≈{_size_hint(name)}). ის პასუხობს კითხვებს და "
+                    f"კითხულობს ეკრანს — მითითება, სურათები, დიაგრამები — ასე რომ, "
+                    f"მეტი მოდელი არ დაგჭირდებათ."
                 )
-                self.skip_btn.setText("Skip — I'll add one later")
+                self.skip_btn.setText("გამოტოვება — მოგვიანებით დავამატებ")
             else:
-                self.title.setText("Download the text model")
+                self.title.setText("ტექსტური მოდელის ჩამოტვირთვა")
                 self.subtitle.setText(
-                    f"Pulling {name} (≈{_size_hint(name)}). This is what answers when you "
-                    f"ask Clicky a question."
+                    f"ჩამოიტვირთება {name} (≈{_size_hint(name)}). სწორედ ის პასუხობს, "
+                    f"როცა კლიკის კითხვას უსვამთ."
                 )
-                self.skip_btn.setText("Skip this model")
-            self.action_btn.setText(f"Pull {name}")
+                self.skip_btn.setText("ამ მოდელის გამოტოვება")
+            self.action_btn.setText(f"{name}-ის ჩამოტვირთვა")
 
         elif step == "pulling_text":
-            self.title.setText(f"Pulling {cfg.ollama_text_model}…")
+            self.title.setText(f"იტვირთება {cfg.ollama_text_model}…")
             self.action_btn.setEnabled(False)
             self.skip_btn.setEnabled(False)
-            self.status.setText("Connecting to Ollama…")
+            self.status.setText("Ollama-სთან დაკავშირება…")
             self.progress.show()
 
         elif step == "vision_model":
             name = cfg.ollama_vision_model
-            self.title.setText("Download the vision model (optional)")
+            self.title.setText("ხედვის მოდელის ჩამოტვირთვა (არასავალდებულო)")
             self.subtitle.setText(
-                f"Pulling {name} (≈{_size_hint(name)}). Needed only when Clicky reads your screen "
-                f"— pointing, screenshots, reading charts. You can skip this and "
-                f"add it later from the tray."
+                f"ჩამოიტვირთება {name} (≈{_size_hint(name)}). საჭიროა მხოლოდ მაშინ, როცა კლიკი "
+                f"ეკრანს კითხულობს — მითითება, სურათები, დიაგრამები. შეგიძლიათ "
+                f"გამოტოვოთ და მოგვიანებით ხატულის მენიუდან დაამატოთ."
             )
-            self.action_btn.setText(f"Pull {name}")
-            self.skip_btn.setText("Skip — add later")
+            self.action_btn.setText(f"{name}-ის ჩამოტვირთვა")
+            self.skip_btn.setText("გამოტოვება — მოგვიანებით")
 
         elif step == "pulling_vision":
-            self.title.setText(f"Pulling {cfg.ollama_vision_model}…")
+            self.title.setText(f"იტვირთება {cfg.ollama_vision_model}…")
             self.action_btn.setEnabled(False)
             self.skip_btn.setEnabled(False)
-            self.status.setText("Connecting to Ollama…")
+            self.status.setText("Ollama-სთან დაკავშირება…")
             self.progress.show()
 
         elif step == "keys":
-            self.title.setText("Add an API key")
+            self.title.setText("API გასაღების დამატება")
             self.subtitle.setText(
-                "Paste a key for Claude, OpenAI or Gemini. Clicky saves it next to "
-                "the app and starts using it right away — you can add, change or "
-                "remove keys later from Tray → Setup & Diagnostics → API Keys."
+                "ჩასვით Claude-ის, OpenAI-ის ან Gemini-ის გასაღები. კლიკი შეინახავს და "
+                "მაშინვე დაიწყებს გამოყენებას — მოგვიანებით შეცვლა შეგიძლიათ აქ: "
+                "ხატულა → პარამეტრები და დიაგნოსტიკა → API გასაღებები."
             )
-            self.action_btn.setText("Open API Keys…")
-            self.alt_btn.setText("Use Ollama instead")
+            self.action_btn.setText("API გასაღებების გახსნა…")
+            self.alt_btn.setText("ამის ნაცვლად Ollama")
             self.alt_btn.show()
-            self.skip_btn.setText("Skip for now")
+            self.skip_btn.setText("ახლა გამოტოვება")
             self._refresh_key_status()
 
         elif step == "done":
-            self.title.setText("All set 🎉")
+            self.title.setText("ყველაფერი მზადაა 🎉")
             providers = cfg.describe()
             self.subtitle.setText(
-                f"Clicky is ready, running on {providers['llm']}.\n\n"
-                f"•  Hold {_pretty_hotkey()} and speak, or say \"Clicky\".\n"
-                "•  Press Esc to cut a long answer short.\n"
-                "•  Right-click the tray icon for modes, models and settings.\n"
-                "•  Drag a PDF onto the panel to ask questions about it."
+                f"კლიკი მზადაა და მუშაობს {providers['llm']}-ზე.\n\n"
+                f"•  დააჭირეთ {_pretty_hotkey()} და ილაპარაკეთ, ან თქვით „კლიკი“.\n"
+                "•  გრძელი პასუხის შესაწყვეტად დააჭირეთ Esc-ს.\n"
+                "•  პარამეტრებისთვის ხატულაზე დააჭირეთ მარჯვენა ღილაკით.\n"
+                "•  PDF ფაილი პანელზე გადმოიტანეთ და ჰკითხეთ მის შესახებ."
             )
-            self.action_btn.setText("Start using Clicky")
+            self.action_btn.setText("დავიწყოთ")
             self.skip_btn.hide()
             mark_setup_complete()
 
@@ -332,7 +329,7 @@ class SetupWizard(QDialog):
             if cfg.get_api_key(env_var)
         ]
         self.status.setText(
-            f"Configured: {', '.join(have)}" if have else "No keys set yet."
+            f"დაყენებულია: {', '.join(have)}" if have else "გასაღებები ჯერ არ არის."
         )
 
     # ── Handlers ─────────────────────────────────────────────────────────────
@@ -407,19 +404,19 @@ class SetupWizard(QDialog):
                     return
                 if ob.is_ollama_installed():
                     self.progress_signal.emit(
-                        "Ollama is installed — starting it…", 0.0
+                        "Ollama დაყენებულია — ვრთავ…", 0.0
                     )
                     ok = ob.ensure_ollama_running(timeout=30)
                     self.finished_signal.emit(
                         ok,
                         "running" if ok else
-                        "Ollama is installed but wouldn't start. Open it from the "
-                        "Start menu, then click Try again."
+                        "Ollama დაყენებულია, მაგრამ არ ჩაირთო. გახსენით Start "
+                        "მენიუდან და დააჭირეთ „თავიდან ცდა“."
                     )
                     return
                 self.finished_signal.emit(False, "missing")
             except Exception as e:
-                self.finished_signal.emit(False, f"Could not check Ollama: {e}")
+                self.finished_signal.emit(False, f"Ollama-ს შემოწმება ვერ მოხერხდა: {e}")
 
         self._worker = threading.Thread(target=_worker, daemon=True)
         self._worker.start()
@@ -427,27 +424,27 @@ class SetupWizard(QDialog):
     def _start_install_worker(self):
         def _worker():
             try:
-                self.progress_signal.emit("Downloading Ollama installer…", 0.0)
+                self.progress_signal.emit("Ollama-ს ინსტალერი იტვირთება…", 0.0)
                 path = ob.download_ollama_installer(
                     on_progress=lambda pct: self.progress_signal.emit(
-                        f"Downloading… {pct:.0f}%", pct
+                        f"იტვირთება… {pct:.0f}%", pct
                     )
                 )
                 self.progress_signal.emit(
-                    "Launching installer (approve any UAC prompts)…", 100.0
+                    "ინსტალერი იხსნება (დაეთანხმეთ UAC ფანჯრებს)…", 100.0
                 )
                 ob.run_ollama_installer(path, silent=False)
-                self.progress_signal.emit("Waiting for Ollama to start…", 100.0)
+                self.progress_signal.emit("ველოდები Ollama-ს ჩართვას…", 100.0)
                 if ob.ensure_ollama_running(timeout=90):
                     self.finished_signal.emit(True, "")
                 else:
                     self.finished_signal.emit(
                         False,
-                        "Ollama installed but didn't come online. Try rebooting, "
-                        "or open Ollama from the Start menu, then re-run setup."
+                        "Ollama დაყენდა, მაგრამ არ ჩაირთო. გადატვირთეთ კომპიუტერი "
+                        "ან გახსენით Ollama Start მენიუდან და თავიდან გაუშვით დაყენება."
                     )
             except Exception as e:
-                self.finished_signal.emit(False, f"Install failed: {e}")
+                self.finished_signal.emit(False, f"დაყენება ვერ მოხერხდა: {e}")
 
         self._worker = threading.Thread(target=_worker, daemon=True)
         self._worker.start()
@@ -463,7 +460,7 @@ class SetupWizard(QDialog):
                     f"{status} ({pct:.0f}%)" if pct else status, pct
                 ),
             )
-            self.finished_signal.emit(ok, "" if ok else f"Could not pull {model}.")
+            self.finished_signal.emit(ok, "" if ok else f"{model} ვერ ჩამოიტვირთა.")
 
         self._worker = threading.Thread(target=_worker, daemon=True)
         self._worker.start()
@@ -489,7 +486,7 @@ class SetupWizard(QDialog):
             self.status.setText(f"⚠️ {msg}")
             self.action_btn.setEnabled(True)
             self.skip_btn.setEnabled(True)
-            self.action_btn.setText("Try again")
+            self.action_btn.setText("თავიდან ცდა")
             return
 
         if s == "installing":

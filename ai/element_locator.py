@@ -178,7 +178,9 @@ async def detect_element(
     except Exception:
         return None
 
-    # Find a tool_use block with coordinate
+    # Find a tool_use block with coordinate. The "click" Claude asks for is
+    # only read for its coordinate and is never performed — Clicky points,
+    # it does not click. Do not add an executor here.
     for block in data.get("content", []):
         if block.get("type") != "tool_use":
             continue

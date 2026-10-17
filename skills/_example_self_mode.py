@@ -1,6 +1,10 @@
 """
 Example skill — demonstrates the SKILL interface.
 
+NOT LOADED: the leading underscore keeps the skill loader from importing it.
+Clicky only points and never clicks, and this example used to answer "I'll
+click the next thing I point at" while nothing performed the click.
+
 Trigger:  "self mode" / "allow clicks" / "click for me"
 Action:   asks Clicky's manager to actually click the next pointed element
           instead of just hovering on it.

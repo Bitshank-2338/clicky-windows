@@ -164,12 +164,12 @@ def mark_reviewed(entry_id: int, correct: bool) -> None:
 
 def summarise(entries: list[dict], header: str = "") -> str:
     if not entries:
-        return f"{header}Nothing logged yet."
+        return f"{header}ჯერ არაფერია ჩაწერილი."
     lines = [header.strip()] if header else []
     for e in entries[:10]:
-        when = datetime.fromtimestamp(e["created_at"]).strftime("%I:%M %p")
+        when = datetime.fromtimestamp(e["created_at"]).strftime("%H:%M")
         q = e["question"][:80]
         lines.append(f"• {when} — {q}")
     if len(entries) > 10:
-        lines.append(f"…and {len(entries) - 10} more.")
+        lines.append(f"…და კიდევ {len(entries) - 10}.")
     return "\n".join(lines)

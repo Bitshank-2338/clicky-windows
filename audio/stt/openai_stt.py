@@ -16,9 +16,11 @@ class OpenAISTT(BaseSTT):
         wav_bytes = pcm16_to_wav(pcm_bytes, sample_rate)
         audio_file = io.BytesIO(wav_bytes)
         audio_file.name = "audio.wav"
+        extra = {"language": cfg.whisper_language} if cfg.whisper_language else {}
         result = await self._client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file,
             response_format="text",
+            **extra,
         )
         return result.strip() if isinstance(result, str) else result.text.strip()

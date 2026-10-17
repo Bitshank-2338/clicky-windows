@@ -21,7 +21,7 @@ class DeepgramSTT(BaseSTT):
         }
         params = {
             "model": "nova-2",
-            "language": "en",
+            "language": cfg.whisper_language or "en",
             "smart_format": "true",
             "punctuate": "true",
         }

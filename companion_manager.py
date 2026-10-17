@@ -109,7 +109,8 @@ def _build_system_prompt(
     if total_steps > 1:
         ctx_lines.append(
             f"LESSON PROGRESS: step {lesson_step + 1} of {total_steps}. "
-            "Explain ONLY this step, then end with \"Say 'next' when ready.\""
+            "Explain ONLY this step, then end with "
+            "\"როცა მზად იქნებით, მითხარით: შემდეგი.\""
         )
 
     # ── Quiz mode: dominant prompt that completely replaces normal behaviour ──
@@ -135,7 +136,7 @@ ABSOLUTE QUIZ RULES (override everything else):
   • Format every turn as:  <one-line evaluation if applicable>  <one question>
 
 STYLE: short, friendly, never more than 2 sentences. End every turn with a
-question mark."""
+question mark. Always write in Georgian (ქართული)."""
 
     from config import _TECHNICAL_RULES
     base = cfg.custom_instructions.strip()
@@ -167,8 +168,8 @@ def _guess_label(transcript: str) -> str:
         if kw in t:
             tail = t.split(kw, 1)[1]
             words = tail.split()
-            return " ".join(words[:3]) or "here"
-    return "right here!"
+            return " ".join(words[:3]) or "აქ"
+    return "აი აქ!"
 
 
 def _split_steps(text: str) -> list[str]:
@@ -271,6 +272,7 @@ class CompanionManager(QObject):
     sig_point_hold          = pyqtSignal(bool)            # True → dwell forever until release
     sig_point_release       = pyqtSignal()                # end dwell + fly buddy back
     sig_error               = pyqtSignal(str)
+    sig_transcript          = pyqtSignal(str)             # recognised speech, before answering
     sig_copilot_models_done = pyqtSignal(int)             # arg = model count
     sig_models_refreshed    = pyqtSignal(str, int)        # (provider, count)
     sig_ollama_models       = pyqtSignal(dict)            # {"vision": [...], "text": [...]}
@@ -380,7 +382,7 @@ class CompanionManager(QObject):
         try:
             self._listener.start()
         except Exception as e:
-            self.sig_error.emit(f"Mic error: {e}")
+            self.sig_error.emit(f"მიკროფონის შეცდომა: {e}")
         # Sleep/wake watchdog — restarts mic + loop after system resume
         self._start_sleep_watchdog()
         # On startup, refresh any stale model cache in the background.
@@ -457,7 +459,7 @@ class CompanionManager(QObject):
         try:
             self._listener.start()
         except Exception as e:
-            self.sig_error.emit(f"Mic restart after sleep failed: {e}")
+            self.sig_error.emit(f"ძილის შემდეგ მიკროფონი ვერ ჩაირთო: {e}")
 
         # 2. If the asyncio loop thread died, restart it
         if not self._thread.is_alive():
@@ -658,8 +660,8 @@ class CompanionManager(QObject):
         except Exception as e:
             _log.exception("mic start failed")
             self.sig_error.emit(
-                f"Couldn't open the microphone: {e}\n"
-                "Check Tray → Setup & Diagnostics → Microphone."
+                f"მიკროფონი ვერ ჩაირთო: {e}\n"
+                "შეამოწმეთ: ხატულა → პარამეტრები და დიაგნოსტიკა → მიკროფონი."
             )
             self._emit_state(AppState.IDLE)
             return
@@ -710,7 +712,7 @@ class CompanionManager(QObject):
             pcm = self._listener.stop_recording()
         except Exception as e:
             _log.exception("mic stop failed")
-            self.sig_error.emit(f"Microphone capture failed: {e}")
+            self.sig_error.emit(f"მიკროფონიდან ჩაწერა ვერ მოხერხდა: {e}")
             self._emit_state(AppState.IDLE)
             return
         _log.info("captured %.1fs of audio", len(pcm) / 32000)
@@ -735,6 +737,9 @@ class CompanionManager(QObject):
             if not transcript.strip():
                 self._emit_state(AppState.IDLE)
                 return
+            # Show what was heard before anything is answered — including
+            # voice commands, so a misheard one is visible too.
+            self.sig_transcript.emit(transcript.strip())
 
             # ── Voice commands — short-circuit before LLM ──
             if is_stop(transcript):
@@ -776,12 +781,12 @@ class CompanionManager(QObject):
             # Journal voice queries — answered locally, no LLM call needed
             if is_journal_today(transcript):
                 msg = journal.summarise(journal.entries_today(),
-                                        "Here's what you asked about today:\n")
+                                        "აი, რას მკითხეთ დღეს:\n")
                 await self._reply_local(msg)
                 return
             if is_journal_week(transcript):
                 msg = journal.summarise(journal.entries_this_week(),
-                                        "Here's the past week:\n")
+                                        "აი, ბოლო კვირა:\n")
                 await self._reply_local(msg)
                 return
             if is_quiz_review(transcript):
@@ -797,7 +802,7 @@ class CompanionManager(QObject):
                         await self._reply_local(msg)
                     return
             except Exception as e:
-                self.sig_error.emit(f"Skill error: {e}")
+                self.sig_error.emit(f"უნარის შეცდომა: {e}")
 
             # 2. Screen capture — skipped if sensitive window (password manager etc.)
             #
@@ -1121,12 +1126,12 @@ class CompanionManager(QObject):
         due = journal.due_for_review(limit=1)
         if not due:
             await self._reply_local(
-                "Nothing due for review right now — keep learning, I'll quiz "
-                "you in a few days."
+                "ახლა გასამეორებელი არაფერია — გააგრძელეთ სწავლა, რამდენიმე "
+                "დღეში შეგამოწმებთ."
             )
             return
         entry = due[0]
-        msg = f"Review: {entry['question']}"
+        msg = f"გავიმეოროთ: {entry['question']}"
         # Mark "correct" optimistically — a real implementation would wait for
         # the user's answer and grade it. Stubbed: reschedule based on streak.
         try:
@@ -1140,13 +1145,13 @@ class CompanionManager(QObject):
         no new LLM round-trip needed."""
         self._lesson_step_idx += 1
         if self._lesson_step_idx >= len(self._lesson_steps):
-            msg = "That's the last step — you're done!"
+            msg = "ეს ბოლო ნაბიჯი იყო — ყველაფერი გააკეთეთ!"
             self._lesson_steps = []
             self._lesson_step_idx = 0
         else:
             step = self._lesson_steps[self._lesson_step_idx]
             total = len(self._lesson_steps)
-            msg = f"Step {self._lesson_step_idx + 1} of {total}: {step}"
+            msg = f"ნაბიჯი {self._lesson_step_idx + 1} / {total}: {step}"
 
         self.sig_response_chunk.emit(msg)
         self.sig_response_done.emit(msg)
@@ -1482,7 +1487,7 @@ class CompanionManager(QObject):
             ms = await refresh(provider)
             self.sig_models_refreshed.emit(provider, len(ms))
         except Exception as e:
-            self.sig_error.emit(f"{provider} model refresh failed: {e}")
+            self.sig_error.emit(f"{provider}: მოდელების განახლება ვერ მოხერხდა: {e}")
 
     def refresh_copilot_models(self):
         """Public — bound to the tray 'Refresh Copilot models' action."""
@@ -1494,7 +1499,7 @@ class CompanionManager(QObject):
             models = await refresh_models_to_cache()
             self.sig_copilot_models_done.emit(len(models))
         except Exception as e:
-            self.sig_error.emit(f"Copilot model refresh failed: {e}")
+            self.sig_error.emit(f"Copilot: მოდელების განახლება ვერ მოხერხდა: {e}")
 
     # ── Ollama model management ──────────────────────────────────────────────
 
@@ -1508,7 +1513,7 @@ class CompanionManager(QObject):
             classified = await OllamaProvider().list_models_classified()
             self.sig_ollama_models.emit(classified)
         except Exception as e:
-            self.sig_error.emit(f"Ollama model list failed: {e}")
+            self.sig_error.emit(f"Ollama: მოდელების სია ვერ მოიძებნა: {e}")
 
     def set_ollama_model(self, kind: str, name: str):
         """Tray callback — update the active vision/text model. No restart needed."""
@@ -1535,7 +1540,7 @@ class CompanionManager(QObject):
             escaped = text.strip().replace("\n", "\\n")
             set_key(str(env_path), "CUSTOM_INSTRUCTIONS", escaped)
         except Exception as e:
-            self.sig_error.emit(f"Could not save instructions: {e}")
+            self.sig_error.emit(f"ინსტრუქციები ვერ შეინახა: {e}")
 
     def set_stt_language(self, code: str):
         """Pin the language Whisper transcribes in. "" = auto-detect.
@@ -1568,7 +1573,7 @@ class CompanionManager(QObject):
                 env_path.touch()
             set_key(str(env_path), "RESPONSE_LANGUAGE", code)
         except Exception as e:
-            self.sig_error.emit(f"Could not save language setting: {e}")
+            self.sig_error.emit(f"ენის პარამეტრი ვერ შეინახა: {e}")
 
     def set_mic_device(self, device_index: int):
         """Tray callback — switch input device without restarting the app."""
@@ -1587,7 +1592,7 @@ class CompanionManager(QObject):
         try:
             self._listener.start()
         except Exception as e:
-            self.sig_error.emit(f"Could not start mic: {e}")
+            self.sig_error.emit(f"მიკროფონი ვერ ჩაირთო: {e}")
 
     def pull_ollama_model(self, name: str):
         """Trigger `ollama pull <name>` in the background. Status via sig_ollama_pull_status."""
@@ -1595,7 +1600,7 @@ class CompanionManager(QObject):
 
     async def _pull_ollama_model(self, name: str):
         from ai.ollama_models_registry import pull_model
-        self.sig_ollama_pull_status.emit(name, f"Pulling {name}…")
+        self.sig_ollama_pull_status.emit(name, f"იტვირთება {name}…")
 
         def _progress(msg: str):
             if msg:
@@ -1603,11 +1608,11 @@ class CompanionManager(QObject):
 
         ok = await pull_model(name, cfg.ollama_host, on_progress=_progress)
         if ok:
-            self.sig_ollama_pull_status.emit(name, f"✓ {name} ready")
+            self.sig_ollama_pull_status.emit(name, f"✓ {name} მზადაა")
             # Refresh the installed list so the tray menu picks it up
             await self._refresh_ollama_models()
         else:
-            self.sig_ollama_pull_status.emit(name, f"✗ Pull failed for {name}")
+            self.sig_ollama_pull_status.emit(name, f"✗ {name} ვერ ჩამოიტვირთა")
 
     def set_web_search(self, enabled: bool):
         self._web_search_enabled = enabled
@@ -1669,7 +1674,7 @@ class CompanionManager(QObject):
             except Exception:
                 pass
         except Exception as e:
-            self.sig_error.emit(f"Quiz start failed: {e}")
+            self.sig_error.emit(f"ქვიზი ვერ დაიწყო: {e}")
         finally:
             self._emit_state(AppState.IDLE)
 
@@ -1744,15 +1749,15 @@ class CompanionManager(QObject):
     def collab_start_host(self):
         """Live-session host. Disabled — see tutor_features/collab.py."""
         self.sig_error.emit(
-            "Live Session: not available in this build. "
-            "Requires a WebRTC signalling server (planned for a future release)."
+            "ერთობლივი სესია ამ ვერსიაში მიუწვდომელია. "
+            "საჭიროა WebRTC სერვერი (დაგეგმილია მომავალ ვერსიაში)."
         )
 
     def collab_join(self, code: str):
         """Live-session join. Disabled — see tutor_features/collab.py."""
         self.sig_error.emit(
-            "Live Session: not available in this build. "
-            "Requires a WebRTC signalling server (planned for a future release)."
+            "ერთობლივი სესია ამ ვერსიაში მიუწვდომელია. "
+            "საჭიროა WebRTC სერვერი (დაგეგმილია მომავალ ვერსიაში)."
         )
 
     # ── Voice picker (ElevenLabs / Edge) ─────────────────────────────────────

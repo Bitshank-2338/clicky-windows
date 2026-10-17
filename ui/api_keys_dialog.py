@@ -28,22 +28,22 @@ from config import cfg
 PROVIDERS = [
     ("ANTHROPIC_API_KEY",  "Anthropic — Claude",
      "https://console.anthropic.com/settings/keys",
-     "Best answers and screen understanding."),
+     "საუკეთესო პასუხები და ეკრანის გაგება."),
     ("OPENAI_API_KEY",     "OpenAI — GPT",
      "https://platform.openai.com/api-keys",
-     "Also upgrades speech-to-text and Clicky's voice."),
+     "ასევე აუმჯობესებს მეტყველების ამოცნობას და კლიკის ხმას."),
     ("GOOGLE_API_KEY",     "Google — Gemini",
      "https://aistudio.google.com/app/apikey",
-     "Generous free tier."),
-    ("ELEVENLABS_API_KEY", "ElevenLabs — voice (optional)",
+     "დიდი უფასო ლიმიტი."),
+    ("ELEVENLABS_API_KEY", "ElevenLabs — ხმა (არასავალდებულო)",
      "https://elevenlabs.io/app/settings/api-keys",
-     "Much more natural speech than the built-in voice."),
-    ("DEEPGRAM_API_KEY",   "Deepgram — speech-to-text (optional)",
+     "ჩაშენებულ ხმაზე ბევრად ბუნებრივი მეტყველება."),
+    ("DEEPGRAM_API_KEY",   "Deepgram — მეტყველების ამოცნობა (არასავალდებულო)",
      "https://console.deepgram.com/",
-     "Faster, more accurate transcription than local Whisper."),
-    ("TAVILY_API_KEY",     "Tavily — web search (optional)",
+     "ლოკალურ Whisper-ზე სწრაფი და ზუსტი ამოცნობა."),
+    ("TAVILY_API_KEY",     "Tavily — ინტერნეტში ძიება (არასავალდებულო)",
      "https://app.tavily.com/home",
-     "Better search results than the free DuckDuckGo fallback."),
+     "უფასო DuckDuckGo-ზე უკეთესი ძიების შედეგები."),
 ]
 
 # Adding one of these keys should also make Clicky start using that provider.
@@ -95,7 +95,7 @@ class ApiKeysDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Clicky — API Keys")
+        self.setWindowTitle("კლიკი — API გასაღებები")
         self.setModal(False)
         self.setMinimumSize(560, 560)
         self.setStyleSheet(STYLE)
@@ -110,13 +110,13 @@ class ApiKeysDialog(QDialog):
         root.setContentsMargins(28, 24, 28, 20)
         root.setSpacing(6)
 
-        title = QLabel("API Keys")
+        title = QLabel("API გასაღებები")
         title.setObjectName("title")
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Clicky works with no keys at all using Ollama. Add a key here "
-            "only if you want a cloud model instead — every field is optional."
+            "კლიკი Ollama-ით გასაღებების გარეშეც მუშაობს. გასაღები აქ "
+            "მხოლოდ მაშინ დაამატეთ, თუ ღრუბლოვანი მოდელი გსურთ — ყველა ველი არასავალდებულოა."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -145,7 +145,7 @@ class ApiKeysDialog(QDialog):
         root.addWidget(scroll, 1)
 
         # show/hide
-        self._reveal = QCheckBox("Show keys")
+        self._reveal = QCheckBox("გასაღებების ჩვენება")
         self._reveal.toggled.connect(self._on_reveal)
         root.addWidget(self._reveal)
 
@@ -154,7 +154,7 @@ class ApiKeysDialog(QDialog):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
-        where = QLabel(f"Saved to {cfg.env_path()}")
+        where = QLabel(f"ინახება აქ: {cfg.env_path()}")
         where.setObjectName("hint")
         where.setWordWrap(True)
         root.addWidget(where)
@@ -162,12 +162,12 @@ class ApiKeysDialog(QDialog):
         root.addSpacing(6)
         row = QHBoxLayout()
         row.setSpacing(10)
-        close = QPushButton("Close")
+        close = QPushButton("დახურვა")
         close.setObjectName("secondary")
         close.clicked.connect(self.reject)
         row.addWidget(close)
         row.addStretch(1)
-        save = QPushButton("Save keys")
+        save = QPushButton("გასაღებების შენახვა")
         save.clicked.connect(self._on_save)
         row.addWidget(save)
         root.addLayout(row)
@@ -187,12 +187,12 @@ class ApiKeysDialog(QDialog):
 
         edit = QLineEdit()
         edit.setEchoMode(QLineEdit.EchoMode.Password)
-        edit.setPlaceholderText("Paste key here — leave blank to skip")
+        edit.setPlaceholderText("ჩასვით გასაღები — გამოსატოვებლად დატოვეთ ცარიელი")
         edit.setText(cfg.get_api_key(env_var))
         self._edits[env_var] = edit
         col.addWidget(edit)
 
-        link = QPushButton(f"Get a key → {url}")
+        link = QPushButton(f"გასაღების მიღება → {url}")
         link.setObjectName("link")
         link.setCursor(Qt.CursorShape.PointingHandCursor)
         link.clicked.connect(lambda _=False, u=url: webbrowser.open(u))
@@ -221,7 +221,7 @@ class ApiKeysDialog(QDialog):
                 newly_added_llm.append(LLM_PROVIDER_FOR_KEY[env_var])
 
         if not changed:
-            self._status.setText("No changes.")
+            self._status.setText("ცვლილებები არ არის.")
             return
 
         # A provider pinned earlier (tray switch writes CLICKY_ACTIVE_LLM)
@@ -237,6 +237,6 @@ class ApiKeysDialog(QDialog):
 
         active = cfg.llm_provider()
         self._status.setText(
-            f"Saved: {', '.join(changed)}.  Now using: {active}."
+            f"შენახულია: {', '.join(changed)}.  ახლა გამოიყენება: {active}."
         )
         self.keys_saved.emit()

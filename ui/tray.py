@@ -74,7 +74,7 @@ class TrayManager(QObject):
         self._tray = QSystemTrayIcon()
         self._tray.setIcon(self._icons["idle"])
         self._tray.setToolTip(
-            f"Clicky - AI Companion\nPress {cfg.hotkey} and just talk"
+            f"კლიკი — AI თანაშემწე\nდააჭირეთ {cfg.hotkey} და ილაპარაკეთ"
         )
         self._search_enabled = True
         # Mirrors the persisted mic mode — off by default, so Clicky only
@@ -113,33 +113,33 @@ class TrayManager(QObject):
 
         providers = cfg.describe()
         info = menu.addAction(
-            f"LLM: {providers['llm']}  |  STT: {providers['stt']}  |  TTS: {providers['tts']}"
+            f"AI: {providers['llm']}  |  ამოცნობა: {providers['stt']}  |  ხმა: {providers['tts']}"
         )
         info.setEnabled(False)
         menu.addSeparator()
 
-        show_action = menu.addAction("Show Panel")
+        show_action = menu.addAction("პანელის ჩვენება")
         show_action.triggered.connect(self.on_show_panel)
 
-        hide_action = menu.addAction("Hide Panel")
+        hide_action = menu.addAction("პანელის დამალვა")
         hide_action.triggered.connect(self.on_hide_panel)
 
-        stop_action = menu.addAction("Stop (Esc)")
+        stop_action = menu.addAction("გაჩერება (Esc)")
         stop_action.triggered.connect(self.on_stop)
 
         menu.addSeparator()
 
         # Model switcher submenu
-        switch_menu = menu.addMenu(f"Model: {providers['llm']}")
+        switch_menu = menu.addMenu(f"მოდელი: {providers['llm']}")
         active = providers['llm']
         for name in cfg.available_llm_providers():
             label = f"● {name}" if name == active else f"  {name}"
             act = switch_menu.addAction(label)
             act.triggered.connect(lambda _=False, n=name: self.on_switch_provider.emit(n))
         switch_menu.addSeparator()
-        login_act = switch_menu.addAction("Sign in to GitHub Copilot…")
+        login_act = switch_menu.addAction("GitHub Copilot-ში შესვლა…")
         login_act.triggered.connect(self.on_copilot_login)
-        refresh_act = switch_menu.addAction("Refresh Copilot models")
+        refresh_act = switch_menu.addAction("Copilot-ის მოდელების განახლება")
         refresh_act.triggered.connect(self.on_copilot_refresh)
 
         # ── Ollama-specific submenu (always visible — Ollama is the offline fallback) ──
@@ -148,7 +148,7 @@ class TrayManager(QObject):
         menu.addSeparator()
 
         search_action = menu.addAction(
-            "Web Search: ON" if self._search_enabled else "Web Search: OFF"
+            "ინტერნეტში ძიება: ჩართულია" if self._search_enabled else "ინტერნეტში ძიება: გამორთულია"
         )
         search_action.setCheckable(True)
         search_action.setChecked(self._search_enabled)
@@ -156,8 +156,8 @@ class TrayManager(QObject):
         self._search_action = search_action
 
         wake_action = menu.addAction(
-            "Always listening (wake word): ON" if self._wake_enabled
-            else "Always listening (wake word): OFF — press the hotkey to talk"
+            "მუდმივი მოსმენა („კლიკი“): ჩართულია" if self._wake_enabled
+            else "მუდმივი მოსმენა („კლიკი“): გამორთულია — სალაპარაკოდ დააჭირეთ კლავიშებს"
         )
         wake_action.setCheckable(True)
         wake_action.setChecked(self._wake_enabled)
@@ -166,17 +166,17 @@ class TrayManager(QObject):
 
         self._build_language_submenu(menu)
 
-        scope_label = "Instructions for Clicky…"
+        scope_label = "ინსტრუქციები კლიკისთვის…"
         scope_action = menu.addAction(scope_label)
         scope_action.triggered.connect(self._prompt_custom_instructions)
 
         # ── Tutor toggles ──
         menu.addSeparator()
-        tutor_menu = menu.addMenu("Tutor Mode")
+        tutor_menu = menu.addMenu("სწავლების რეჟიმი")
 
         slow_action = tutor_menu.addAction(
-            "Slow Mode (teacher pace): ON" if self._slow_enabled
-            else "Slow Mode (teacher pace): OFF"
+            "ნელი რეჟიმი (მასწავლებლის ტემპი): ჩართულია" if self._slow_enabled
+            else "ნელი რეჟიმი (მასწავლებლის ტემპი): გამორთულია"
         )
         slow_action.setCheckable(True)
         slow_action.setChecked(self._slow_enabled)
@@ -184,7 +184,7 @@ class TrayManager(QObject):
         self._slow_action = slow_action
 
         quiz_action = tutor_menu.addAction(
-            "Quiz Mode: ON" if self._quiz_enabled else "Quiz Mode: OFF"
+            "ქვიზის რეჟიმი: ჩართულია" if self._quiz_enabled else "ქვიზის რეჟიმი: გამორთულია"
         )
         quiz_action.setCheckable(True)
         quiz_action.setChecked(self._quiz_enabled)
@@ -192,8 +192,8 @@ class TrayManager(QObject):
         self._quiz_action = quiz_action
 
         privacy_action = tutor_menu.addAction(
-            "Privacy Guard: ON" if self._privacy_enabled
-            else "Privacy Guard: OFF"
+            "კონფიდენციალურობის დაცვა: ჩართულია" if self._privacy_enabled
+            else "კონფიდენციალურობის დაცვა: გამორთულია"
         )
         privacy_action.setCheckable(True)
         privacy_action.setChecked(self._privacy_enabled)
@@ -201,7 +201,7 @@ class TrayManager(QObject):
         self._privacy_action = privacy_action
 
         code_action = tutor_menu.addAction(
-            "Code Mode (auto): ON" if self._code_enabled else "Code Mode (auto): OFF"
+            "კოდის რეჟიმი (ავტომატური): ჩართულია" if self._code_enabled else "კოდის რეჟიმი (ავტომატური): გამორთულია"
         )
         code_action.setCheckable(True)
         code_action.setChecked(self._code_enabled)
@@ -209,7 +209,7 @@ class TrayManager(QObject):
         self._code_action = code_action
 
         ml_action = tutor_menu.addAction(
-            "Multilingual: ON" if self._multilang_enabled else "Multilingual: OFF"
+            "მრავალენოვანი: ჩართულია" if self._multilang_enabled else "მრავალენოვანი: გამორთულია"
         )
         ml_action.setCheckable(True)
         ml_action.setChecked(self._multilang_enabled)
@@ -217,7 +217,7 @@ class TrayManager(QObject):
         self._ml_action = ml_action
 
         ocr_action = tutor_menu.addAction(
-            "OCR Fallback: ON" if self._ocr_enabled else "OCR Fallback: OFF"
+            "ტექსტის ამოცნობა (OCR): ჩართულია" if self._ocr_enabled else "ტექსტის ამოცნობა (OCR): გამორთულია"
         )
         ocr_action.setCheckable(True)
         ocr_action.setChecked(self._ocr_enabled)
@@ -226,36 +226,36 @@ class TrayManager(QObject):
 
         # ── Journal ──
         menu.addSeparator()
-        journal_menu = menu.addMenu("Journal")
+        journal_menu = menu.addMenu("ჟურნალი")
 
         journal_action = journal_menu.addAction(
-            "Logging: ON" if self._journal_enabled else "Logging: OFF"
+            "ჩაწერა: ჩართულია" if self._journal_enabled else "ჩაწერა: გამორთულია"
         )
         journal_action.setCheckable(True)
         journal_action.setChecked(self._journal_enabled)
         journal_action.triggered.connect(self._toggle_journal)
         self._journal_action = journal_action
 
-        open_journal = journal_menu.addAction("Open journal folder")
+        open_journal = journal_menu.addAction("ჟურნალის საქაღალდის გახსნა")
         open_journal.triggered.connect(self.on_journal_open)
 
-        attach = journal_menu.addAction("Attach document (PDF / TXT / DOCX)…")
+        attach = journal_menu.addAction("დოკუმენტის მიმაგრება (PDF / TXT / DOCX)…")
         attach.triggered.connect(self.on_attach_doc)
 
         # ── Recording ──
-        rec_menu = menu.addMenu("Lesson Recording")
+        rec_menu = menu.addMenu("გაკვეთილის ჩაწერა")
         if self._is_recording:
-            stop_rec = rec_menu.addAction("● Stop recording")
+            stop_rec = rec_menu.addAction("● ჩაწერის შეწყვეტა")
             stop_rec.triggered.connect(self.on_record_stop)
         else:
-            start_rec = rec_menu.addAction("Start recording")
+            start_rec = rec_menu.addAction("ჩაწერის დაწყება")
             start_rec.triggered.connect(self.on_record_start)
 
         # ── Workflow capture ──
-        wf_menu = menu.addMenu("Workflow Capture")
-        wf_start = wf_menu.addAction("Start capturing my clicks")
+        wf_menu = menu.addMenu("მოქმედებების ჩაწერა")
+        wf_start = wf_menu.addAction("ჩემი დაწკაპუნებების ჩაწერის დაწყება")
         wf_start.triggered.connect(self.on_workflow_start)
-        wf_stop  = wf_menu.addAction("Stop + send to Clicky")
+        wf_stop  = wf_menu.addAction("შეწყვეტა და კლიკისთვის გაგზავნა")
         wf_stop.triggered.connect(self.on_workflow_stop)
 
         # ── Live collaboration ──
@@ -272,19 +272,19 @@ class TrayManager(QObject):
         menu.addSeparator()
 
         # ── Setup / Diagnostics ──
-        setup_menu = menu.addMenu("Setup && Diagnostics")
+        setup_menu = menu.addMenu("პარამეტრები && დიაგნოსტიკა")
         self._build_mic_submenu(setup_menu)
         self._build_stt_language_submenu(setup_menu)
-        keys_act = setup_menu.addAction("API Keys…")
+        keys_act = setup_menu.addAction("API გასაღებები…")
         keys_act.triggered.connect(self.on_api_keys)
-        run_setup = setup_menu.addAction("Run setup wizard again…")
+        run_setup = setup_menu.addAction("დაყენების ოსტატის ხელახლა გაშვება…")
         run_setup.triggered.connect(self.on_run_setup)
-        diag = setup_menu.addAction("Save diagnostics report…")
+        diag = setup_menu.addAction("დიაგნოსტიკის ანგარიშის შენახვა…")
         diag.triggered.connect(self.on_diagnostics)
 
         menu.addSeparator()
 
-        quit_action = menu.addAction("Quit Clicky")
+        quit_action = menu.addAction("კლიკის დახურვა")
         quit_action.triggered.connect(self.on_quit)
 
         self._tray.setContextMenu(menu)
@@ -302,7 +302,7 @@ class TrayManager(QObject):
 
     def _prompt_custom_instructions(self):
         dlg = QDialog(None)
-        dlg.setWindowTitle("Instructions for Clicky")
+        dlg.setWindowTitle("ინსტრუქციები კლიკისთვის")
         dlg.setMinimumSize(480, 380)
         dlg.setStyleSheet("""
             QDialog { background-color: #1e1e24; }
@@ -327,27 +327,27 @@ class TrayManager(QObject):
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(10)
 
-        title = QLabel("Instructions for Clicky")
+        title = QLabel("ინსტრუქციები კლიკისთვის")
         title.setStyleSheet("font-size: 15px; font-weight: 600; color: #ffffff;")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Replaces Clicky's core behavior (name, rules, tone).\n"
-            "{{CONTEXT}} and {{TODAY}} are placeholders — best left in."
+            "ცვლის კლიკის ძირითად ქცევას (სახელი, წესები, ტონი).\n"
+            "{{CONTEXT}} და {{TODAY}} ჩანაცვლების ადგილებია — სჯობს დატოვოთ."
         )
         subtitle.setStyleSheet("color: #9a9aa4; font-size: 12px;")
         layout.addWidget(subtitle)
 
         editor = QTextEdit()
         editor.setPlainText(self._custom_instructions)
-        editor.setPlaceholderText("e.g. \"Your name is Max, a laid-back coding buddy…\"")
+        editor.setPlaceholderText("მაგ.: \"შენი სახელია მაქსი, მშვიდი თანაშემწე…\"")
         layout.addWidget(editor, stretch=1)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("გაუქმება")
         cancel_btn.clicked.connect(dlg.reject)
-        ok_btn = QPushButton("Save")
+        ok_btn = QPushButton("შენახვა")
         ok_btn.setObjectName("primary")
         ok_btn.clicked.connect(dlg.accept)
         btn_row.addWidget(cancel_btn)
@@ -365,20 +365,20 @@ class TrayManager(QObject):
         assumes it is hearing. Auto-detect re-decides every utterance, which is
         what makes code-mixed speech (Hinglish) transcribe inconsistently.
         """
-        from tutor_features.multilang import _LANG_VOICE
+        from tutor_features.multilang import _LANG_VOICE, display_name
 
         current = getattr(self, "_stt_language", "")
-        label = _LANG_VOICE.get(current, ("Auto-detect",))[0] if current else "Auto-detect"
-        menu = parent_menu.addMenu(f"Speech recognition: {label}")
+        label = display_name(current) if current else "ავტომატური"
+        menu = parent_menu.addMenu(f"მეტყველების ამოცნობა: {label}")
 
-        auto_act = menu.addAction("Auto-detect")
+        auto_act = menu.addAction("ავტომატური")
         auto_act.setCheckable(True)
         auto_act.setChecked(current == "")
         auto_act.triggered.connect(lambda: self.on_set_stt_language.emit(""))
 
         menu.addSeparator()
-        for code, (name, _voice) in _LANG_VOICE.items():
-            act = menu.addAction(name)
+        for code in _LANG_VOICE:
+            act = menu.addAction(display_name(code))
             act.setCheckable(True)
             act.setChecked(current == code)
             act.triggered.connect(
@@ -388,21 +388,21 @@ class TrayManager(QObject):
     def _build_language_submenu(self, parent_menu: QMenu):
         """Lets the user pin Clicky's reply language instead of relying on
         (sometimes unreliable) auto-detect from the transcript."""
-        from tutor_features.multilang import _LANG_VOICE
+        from tutor_features.multilang import _LANG_VOICE, display_name
 
         current = getattr(self, "_response_language", "")
         lang_menu = parent_menu.addMenu(
-            f"Reply language: {_LANG_VOICE.get(current, ('Auto-detect',))[0] if current else 'Auto-detect'}"
+            f"პასუხის ენა: {display_name(current) if current else 'ავტომატური'}"
         )
 
-        auto_act = lang_menu.addAction("Auto-detect")
+        auto_act = lang_menu.addAction("ავტომატური")
         auto_act.setCheckable(True)
         auto_act.setChecked(current == "")
         auto_act.triggered.connect(lambda: self.on_set_response_language.emit(""))
 
         lang_menu.addSeparator()
-        for code, (name, _voice) in _LANG_VOICE.items():
-            act = lang_menu.addAction(name)
+        for code in _LANG_VOICE:
+            act = lang_menu.addAction(display_name(code))
             act.setCheckable(True)
             act.setChecked(current == code)
             act.triggered.connect(lambda checked, c=code: self.on_set_response_language.emit(c))
@@ -417,13 +417,13 @@ class TrayManager(QObject):
         except Exception:
             return  # sounddevice not ready yet — skip silently, not fatal
 
-        mic_menu = parent_menu.addMenu("Microphone")
+        mic_menu = parent_menu.addMenu("მიკროფონი")
         for idx, dev in enumerate(devices):
             if dev.get("max_input_channels", 0) <= 0:
                 continue
             label = dev["name"]
             if idx == default_idx:
-                label += "  (system default)"
+                label += "  (სისტემის ნაგულისხმევი)"
             act = mic_menu.addAction(label)
             act.setCheckable(True)
             act.setChecked(idx == getattr(self, "_active_mic_index", default_idx))
@@ -440,7 +440,7 @@ class TrayManager(QObject):
         active_text   = providers.get("ollama_text_model", "")
 
         # ─ Vision model picker ─
-        v_menu = ol_menu.addMenu(f"Vision model: {active_vision or '(none)'}")
+        v_menu = ol_menu.addMenu(f"ხედვის მოდელი: {active_vision or '(არცერთი)'}")
         installed_vision = self._ollama_installed.get("vision", [])
         if installed_vision:
             for name in installed_vision:
@@ -450,11 +450,11 @@ class TrayManager(QObject):
                     lambda _=False, n=name: self.on_ollama_set_model.emit("vision", n)
                 )
         else:
-            empty = v_menu.addAction("(no vision models installed)")
+            empty = v_menu.addAction("(ხედვის მოდელები არ არის დაყენებული)")
             empty.setEnabled(False)
 
         # ─ Text model picker ─
-        t_menu = ol_menu.addMenu(f"Text model: {active_text or '(none)'}")
+        t_menu = ol_menu.addMenu(f"ტექსტური მოდელი: {active_text or '(არცერთი)'}")
         installed_text = self._ollama_installed.get("text", [])
         if installed_text:
             for name in installed_text:
@@ -464,13 +464,13 @@ class TrayManager(QObject):
                     lambda _=False, n=name: self.on_ollama_set_model.emit("text", n)
                 )
         else:
-            empty = t_menu.addAction("(no text models installed)")
+            empty = t_menu.addAction("(ტექსტური მოდელები არ არის დაყენებული)")
             empty.setEnabled(False)
 
         ol_menu.addSeparator()
 
         # ─ Pull recommended ─
-        pull_menu = ol_menu.addMenu("Pull recommended…")
+        pull_menu = ol_menu.addMenu("რეკომენდებულის ჩამოტვირთვა…")
         already = set(installed_vision) | set(installed_text)
 
         def _add_recs(rec_list, header):
@@ -489,12 +489,12 @@ class TrayManager(QObject):
                         lambda _=False, n=rec.name: self.on_ollama_pull.emit(n)
                     )
 
-        _add_recs(RECOMMENDED_VISION, "── Vision ──")
+        _add_recs(RECOMMENDED_VISION, "── ხედვა ──")
         pull_menu.addSeparator()
-        _add_recs(RECOMMENDED_TEXT, "── Text ──")
+        _add_recs(RECOMMENDED_TEXT, "── ტექსტი ──")
 
         ol_menu.addSeparator()
-        refresh_act = ol_menu.addAction("Refresh installed models")
+        refresh_act = ol_menu.addAction("დაყენებული მოდელების განახლება")
         refresh_act.triggered.connect(self.on_ollama_refresh)
 
     def set_ollama_models(self, classified: dict):
@@ -512,64 +512,64 @@ class TrayManager(QObject):
     def _toggle_search(self, checked: bool):
         self._search_enabled = checked
         self._search_action.setText(
-            "Web Search: ON" if checked else "Web Search: OFF"
+            "ინტერნეტში ძიება: ჩართულია" if checked else "ინტერნეტში ძიება: გამორთულია"
         )
         self.on_toggle_search.emit(checked)
 
     def _toggle_wake(self, checked: bool):
         self._wake_enabled = checked
         self._wake_action.setText(
-            "Wake word 'Clicky': ON" if checked else "Wake word 'Clicky': OFF"
+            "მუდმივი მოსმენა („კლიკი“): ჩართულია" if checked else "მუდმივი მოსმენა („კლიკი“): გამორთულია"
         )
         self.on_toggle_wake_word.emit(checked)
 
     def _toggle_slow(self, checked: bool):
         self._slow_enabled = checked
         self._slow_action.setText(
-            "Slow Mode (teacher pace): ON" if checked
-            else "Slow Mode (teacher pace): OFF"
+            "ნელი რეჟიმი (მასწავლებლის ტემპი): ჩართულია" if checked
+            else "ნელი რეჟიმი (მასწავლებლის ტემპი): გამორთულია"
         )
         self.on_toggle_slow_mode.emit(checked)
 
     def _toggle_quiz(self, checked: bool):
         self._quiz_enabled = checked
         self._quiz_action.setText(
-            "Quiz Mode: ON" if checked else "Quiz Mode: OFF"
+            "ქვიზის რეჟიმი: ჩართულია" if checked else "ქვიზის რეჟიმი: გამორთულია"
         )
         self.on_toggle_quiz_mode.emit(checked)
 
     def _toggle_privacy(self, checked: bool):
         self._privacy_enabled = checked
         self._privacy_action.setText(
-            "Privacy Guard: ON" if checked else "Privacy Guard: OFF"
+            "კონფიდენციალურობის დაცვა: ჩართულია" if checked else "კონფიდენციალურობის დაცვა: გამორთულია"
         )
         self.on_toggle_privacy.emit(checked)
 
     def _toggle_code(self, checked: bool):
         self._code_enabled = checked
         self._code_action.setText(
-            "Code Mode (auto): ON" if checked else "Code Mode (auto): OFF"
+            "კოდის რეჟიმი (ავტომატური): ჩართულია" if checked else "კოდის რეჟიმი (ავტომატური): გამორთულია"
         )
         self.on_toggle_code_mode.emit(checked)
 
     def _toggle_multilang(self, checked: bool):
         self._multilang_enabled = checked
         self._ml_action.setText(
-            "Multilingual: ON" if checked else "Multilingual: OFF"
+            "მრავალენოვანი: ჩართულია" if checked else "მრავალენოვანი: გამორთულია"
         )
         self.on_toggle_multilang.emit(checked)
 
     def _toggle_ocr(self, checked: bool):
         self._ocr_enabled = checked
         self._ocr_action.setText(
-            "OCR Fallback: ON" if checked else "OCR Fallback: OFF"
+            "ტექსტის ამოცნობა (OCR): ჩართულია" if checked else "ტექსტის ამოცნობა (OCR): გამორთულია"
         )
         self.on_toggle_ocr.emit(checked)
 
     def _toggle_journal(self, checked: bool):
         self._journal_enabled = checked
         self._journal_action.setText(
-            "Logging: ON" if checked else "Logging: OFF"
+            "ჩაწერა: ჩართულია" if checked else "ჩაწერა: გამორთულია"
         )
         self.on_toggle_journal.emit(checked)
 

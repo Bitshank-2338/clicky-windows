@@ -152,9 +152,18 @@ def _stroke_tip(shape: dict, u: float):
 
 # Pointing phrases from the original
 POINTER_PHRASES = (
-    "right here!", "this one!", "over here!",
-    "click this!", "here it is!", "found it!",
+    "აი აქ!", "აი ეს!", "აქეთ!",
+    "აქ დააჭირეთ!", "ეს არის!", "ვიპოვე!",
 )
+
+# Caption of what Clicky heard — shown large at the bottom of the screen as
+# soon as speech is recognised, so the user can check it before the answer.
+CAPTION_FONT_PX   = 34
+CAPTION_HEADER    = "თქვენ თქვით:"
+CAPTION_MAX_CHARS = 220
+CAPTION_FADE_IN_S = 0.25
+CAPTION_FADE_OUT_S = 0.6
+CAPTION_LINGER_S  = 5.0     # stays this long after the answer finishes
 
 # Teacher-pace pointing timings (seconds)
 # Flight duration scales with distance but stays slow enough to follow visually.
@@ -219,6 +228,12 @@ class CursorOverlay(QWidget):
         # Thinking spinner phase
         self._spin_phase: float = 0.0
 
+        # Recognised-speech caption
+        self._caption_text: str = ""
+        self._caption_t0: float = 0.0
+        self._caption_hide_at: float = float("inf")
+        self._caption_area = None   # QRect of the screen the user is on
+
         # Transparent click-through, covers all monitors
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -249,6 +264,24 @@ class CursorOverlay(QWidget):
 
     def set_mode(self, mode: str):
         self._mode = mode
+        if mode == MODE_LISTENING:
+            # A new question is starting — drop the previous caption.
+            self._caption_text = ""
+        elif mode == MODE_IDLE and self._caption_text:
+            self._caption_hide_at = min(
+                self._caption_hide_at, time.monotonic() + CAPTION_LINGER_S
+            )
+
+    def show_caption(self, text: str):
+        """Show the recognised question in large type until the answer ends."""
+        text = " ".join(text.split())
+        if len(text) > CAPTION_MAX_CHARS:
+            text = text[:CAPTION_MAX_CHARS].rstrip() + "…"
+        self._caption_text = text
+        self._caption_t0 = time.monotonic()
+        self._caption_hide_at = float("inf")
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        self._caption_area = screen.availableGeometry()
 
     def set_audio_level(self, rms: float):
         # Match Swift easing: eased = pow(min(rms*2.85, 1), 0.76)
@@ -537,7 +570,66 @@ class CursorOverlay(QWidget):
         if self._locked_pos is not None and self._bubble_text:
             self._draw_bubble(p, cx, cy, self._bubble_text)
 
+        if self._caption_text:
+            self._draw_caption(p)
+
         p.end()
+
+    def _draw_caption(self, p):
+        now = time.monotonic()
+        if now >= self._caption_hide_at + CAPTION_FADE_OUT_S:
+            self._caption_text = ""
+            return
+        alpha = min(1.0, (now - self._caption_t0) / CAPTION_FADE_IN_S)
+        if now > self._caption_hide_at:
+            alpha *= 1.0 - (now - self._caption_hide_at) / CAPTION_FADE_OUT_S
+        if alpha <= 0.0 or self._caption_area is None:
+            return
+
+        area = self._caption_area
+        pad = 22
+        max_w = int(area.width() * 0.6)
+
+        body_font = QFont()
+        body_font.setFamilies(["Segoe UI", "Sylfaen"])   # Sylfaen: Georgian fallback
+        body_font.setPixelSize(CAPTION_FONT_PX)
+        body_font.setWeight(QFont.Weight.DemiBold)
+        head_font = QFont(body_font)
+        head_font.setPixelSize(int(CAPTION_FONT_PX * 0.55))
+        head_font.setWeight(QFont.Weight.Normal)
+
+        flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap)
+        p.setFont(body_font)
+        body = p.fontMetrics().boundingRect(
+            0, 0, max_w - 2 * pad, 10_000, flags, self._caption_text
+        )
+        p.setFont(head_font)
+        head_h = p.fontMetrics().height()
+
+        box_w = max(body.width(), p.fontMetrics().horizontalAdvance(CAPTION_HEADER)) + 2 * pad
+        box_h = head_h + 6 + body.height() + 2 * pad
+        # Bottom-centre of the screen the user is on, above the taskbar.
+        # The overlay spans every monitor, so convert to window-local coords.
+        left = area.x() + (area.width() - box_w) / 2 - self.x()
+        top = area.y() + area.height() - box_h - 48 - self.y()
+        box = QRectF(left, top, box_w, box_h)
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(12, 14, 20, int(225 * alpha)))
+        p.drawRoundedRect(box, 18, 18)
+        p.setPen(QPen(QColor(0x33, 0x80, 0xFF, int(200 * alpha)), 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(box, 18, 18)
+
+        p.setFont(head_font)
+        p.setPen(QColor(170, 190, 230, int(255 * alpha)))
+        p.drawText(QRectF(left, top + pad, box_w, head_h),
+                   int(Qt.AlignmentFlag.AlignHCenter), CAPTION_HEADER)
+        p.setFont(body_font)
+        p.setPen(QColor(255, 255, 255, int(255 * alpha)))
+        p.drawText(QRectF(left + pad, top + pad + head_h + 6,
+                          box_w - 2 * pad, body.height()),
+                   flags, self._caption_text)
 
     def _draw_annotations(self, p):
         """Render teaching shapes with progressive draw-in animation.
