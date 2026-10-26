@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
+from storage import credentials, setting, set_setting, set_credential
 
 # Where the user-editable .env lives. In the PyInstaller build, __file__ is
 # inside the bundle's _internal\ directory but users (and the installer) put
@@ -20,6 +21,17 @@ for _name in (".env", ".env.local"):
     _p = _HERE / _name
     if _p.exists():
         load_dotenv(_p, override=True)
+
+# GUI edits use a writable per-user store and outrank legacy source configuration.
+from storage import data_dir, read_json
+for _key, _value in read_json(data_dir() / "settings.json", {}).items():
+    if _key.isupper() and isinstance(_value, (str, int, float, bool)):
+        os.environ[_key] = str(_value)
+for _key, _value in credentials().items():
+    if _value:
+        os.environ[_key] = _value
+    else:
+        os.environ.pop(_key, None)
 
 
 DEFAULT_SYSTEM_PROMPT = """You are Clicky, a VISUAL AI tutor running on Windows. You live
@@ -254,22 +266,7 @@ class Config:
         """Runtime switch — next query uses this provider. Persisted to .env."""
         name = name.lower()
         os.environ["CLICKY_ACTIVE_LLM"] = name
-        # Write to .env so the choice survives restarts
-        env_path = _HERE / ".env"
-        try:
-            lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True) if env_path.exists() else []
-            key = "CLICKY_ACTIVE_LLM"
-            found = False
-            for i, line in enumerate(lines):
-                if line.startswith(key + "=") or line.startswith(key + " ="):
-                    lines[i] = f"{key}={name}\n"
-                    found = True
-                    break
-            if not found:
-                lines.append(f"\n{key}={name}\n")
-            env_path.write_text("".join(lines), encoding="utf-8")
-        except Exception:
-            pass  # non-fatal — runtime switch still works via os.environ
+        self._write_env("CLICKY_ACTIVE_LLM", name)
 
     # ── API key management ───────────────────────────────────────────────
     #
@@ -290,7 +287,7 @@ class Config:
     @staticmethod
     def env_path() -> Path:
         """The .env Clicky reads and writes — next to Clicky.exe when frozen."""
-        return _HERE / ".env"
+        return data_dir() / "settings.json"
 
     def get_api_key(self, env_var: str) -> str:
         attr = self.API_KEY_FIELDS.get(env_var, (None, None))[0]
@@ -303,42 +300,20 @@ class Config:
         value = (value or "").strip()
         attr = self.API_KEY_FIELDS[env_var][0]
 
+        # Persist before changing runtime state: a failed save must remain visible.
+        set_credential(env_var, value)
         setattr(self, attr, value or None)
         if value:
             os.environ[env_var] = value
         else:
             os.environ.pop(env_var, None)
 
-        self._write_env(env_var, value)
 
     def _write_env(self, key: str, value: str) -> None:
-        """Upsert KEY=value in .env, removing the line entirely when cleared."""
-        path = self.env_path()
-        try:
-            lines = (
-                path.read_text(encoding="utf-8").splitlines(keepends=True)
-                if path.exists() else []
-            )
-            out, found = [], False
-            for line in lines:
-                stripped = line.lstrip()
-                if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
-                    found = True
-                    if value:
-                        out.append(f"{key}={value}\n")
-                    # cleared → drop the line
-                    continue
-                out.append(line)
-
-            if value and not found:
-                if out and not out[-1].endswith("\n"):
-                    out.append("\n")
-                out.append(f"{key}={value}\n")
-
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("".join(out), encoding="utf-8")
-        except Exception:
-            pass  # runtime value still applied; persistence is best-effort
+        """Persist nonsecret configuration atomically in the per-user directory."""
+        if key in self.API_KEY_FIELDS:
+            raise ValueError("API keys must use the protected credential store")
+        set_setting(key, value)
 
     def clear_active_llm(self) -> None:
         """Unpin the provider so the key-priority chain decides again.
@@ -354,9 +329,10 @@ class Config:
         forced = os.getenv("CLICKY_STT", "").strip().lower()
         if forced in ("deepgram", "openai", "whisper_cpp", "faster_whisper"):
             return forced
-        if self.deepgram_api_key:
+        local_model = self.llm_provider() in {"ollama", "lmstudio"}
+        if self.deepgram_api_key and not local_model:
             return "deepgram"
-        if self.openai_api_key:
+        if self.openai_api_key and not local_model:
             return "openai"
         # Prefer whisper.cpp (GPU-accelerated, same engine as Handy) when the
         # pywhispercpp package is installed; otherwise fall back to faster-whisper.
@@ -367,11 +343,16 @@ class Config:
             return "faster_whisper"
 
     def tts_provider(self) -> str:
+        forced = setting("tts_provider", "auto")
+        if forced in {"sapi", "edge_tts", "openai", "elevenlabs"}:
+            return forced
+        if self.llm_provider() in {"ollama", "lmstudio"}:
+            return "sapi"
         if self.elevenlabs_api_key:
             return "elevenlabs"
         if self.openai_api_key:
             return "openai"
-        return "edge_tts"
+        return "sapi"
 
     def search_provider(self) -> str:
         if self.tavily_api_key:

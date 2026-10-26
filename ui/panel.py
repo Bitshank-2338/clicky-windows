@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QSizePolicy, QComboBox, QFrame
+    QPushButton, QScrollArea, QSizePolicy, QComboBox, QFrame, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QCursor
@@ -36,7 +36,7 @@ def _hotkey_label() -> str:
 
 
 STATE_LABELS = {
-    AppState.IDLE:      f"Say 'Clicky' or {_hotkey_label()}",
+    AppState.IDLE:      f"Say 'Clicky' or {_hotkey_label()}" if cfg.ambient_mic() else f"Type below or hold {_hotkey_label()}",
     AppState.LISTENING: "Listening...",
     AppState.THINKING:  "Thinking...",
     AppState.SPEAKING:  "Speaking...",
@@ -151,6 +151,12 @@ class CompanionPanel(QWidget):
     on_model_changed         = pyqtSignal(str)
     on_ollama_refresh_requested = pyqtSignal()
     on_document_dropped      = pyqtSignal(str)
+    on_text_submitted        = pyqtSignal(str)
+    on_stop_requested        = pyqtSignal()
+    on_settings_requested    = pyqtSignal()
+    on_new_chat              = pyqtSignal()
+    on_jobs_requested        = pyqtSignal()
+    on_sketch_requested      = pyqtSignal()
     _sig_copilot_code        = pyqtSignal(str, str)   # (user_code, verification_uri)
     _sig_copilot_error       = pyqtSignal(str)
     _sig_copilot_status      = pyqtSignal(str)        # sign-in progress / success message
@@ -159,6 +165,7 @@ class CompanionPanel(QWidget):
         super().__init__()
         self._state = AppState.IDLE
         self._response_text = ""
+        self._transcript = ""
         self._ollama_installed: dict[str, list[str]] = {"vision": [], "text": []}
         self._ollama_pick: Optional[str] = None
         self._ollama_polled_at = 0.0
@@ -251,6 +258,7 @@ class CompanionPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._response_label = QLabel()
+        self._response_label.setTextFormat(Qt.TextFormat.PlainText)
         self._response_label.setObjectName("response")
         self._response_label.setFont(FONT_RESPONSE)
         self._response_label.setWordWrap(True)
@@ -260,8 +268,28 @@ class CompanionPanel(QWidget):
         scroll.setWidget(self._response_label)
         root.addWidget(scroll, stretch=1)
 
+        self._composer = QLineEdit()
+        self._composer.setPlaceholderText("Ask Clicky about your screen…")
+        self._composer.setAccessibleName("Message to Clicky")
+        self._composer.setMaxLength(12000)
+        self._composer.returnPressed.connect(self._send_text)
+        root.addWidget(self._composer)
+        actions = QHBoxLayout()
+        for label, handler in (("Send", self._send_text), ("Stop", self.on_stop_requested.emit),
+                               ("New", self.on_new_chat.emit), ("Settings", self.on_settings_requested.emit)):
+            button = QPushButton(label)
+            button.clicked.connect(handler)
+            actions.addWidget(button)
+        root.addLayout(actions)
+        work = QHBoxLayout()
+        for label, signal in (("Work & routines", self.on_jobs_requested), ("Sketch", self.on_sketch_requested)):
+            button = QPushButton(label)
+            button.clicked.connect(signal.emit)
+            work.addWidget(button)
+        root.addLayout(work)
+
         # Push-to-talk button
-        self._ptt_btn = QPushButton(f"Say 'Clicky' or hold {_hotkey_label()}")
+        self._ptt_btn = QPushButton(f"Hold {_hotkey_label()} to speak")
         self._ptt_btn.setObjectName("hotkey_btn")
         self._ptt_btn.setFont(FONT_LABEL)
         self._ptt_btn.setFixedHeight(44)
@@ -407,16 +435,31 @@ class CompanionPanel(QWidget):
     def update_response(self, text: str):
         """Append streaming text chunk."""
         self._response_text = text
-        self._response_label.setText(text)
+        self._response_label.setText(self._transcript + text)
 
     def append_response_chunk(self, chunk: str):
         self._response_text += chunk
-        self._response_label.setText(self._response_text)
+        self._response_label.setText(self._transcript + self._response_text)
+
+    def _send_text(self):
+        text = self._composer.text().strip()
+        if text:
+            self._composer.clear()
+            self.on_text_submitted.emit(text)
+
+    def begin_turn(self, question):
+        if self._response_text:
+            self._transcript += self._response_text + "\n\n"
+        self._transcript += "You: " + question + "\n\nClicky: "
+        self._transcript = self._transcript[-40000:]
+        self._response_text = ""
+        self._response_label.setText(self._transcript)
 
     def set_audio_level(self, rms: float):
         self._waveform.set_level(rms)
 
     def clear_response(self):
+        self._transcript = ""
         self._response_text = ""
         self._response_label.setText("")
 

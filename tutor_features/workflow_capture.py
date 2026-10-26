@@ -44,6 +44,9 @@ class WorkflowCapture:
         self._is_running = True
 
         def on_click(x, y, button, pressed):
+            from tutor import active_window_title, is_sensitive_window
+            if is_sensitive_window(active_window_title()):
+                return
             if pressed and self._is_running:
                 self._events.append({
                     "t": time.monotonic() - self._t0,
@@ -52,11 +55,18 @@ class WorkflowCapture:
                 })
 
         def on_press(key):
+            from tutor import active_window_title, is_sensitive_window
+            if is_sensitive_window(active_window_title()):
+                return
             if self._is_running:
+                # Never retain typed characters, even in an unlabelled password field.
+                name = getattr(key, "name", None)
+                if name not in {"enter", "tab", "esc", "backspace", "delete", "left", "right", "up", "down"}:
+                    return
                 self._events.append({
                     "t": time.monotonic() - self._t0,
                     "kind": "key",
-                    "data": {"key": str(key)},
+                    "data": {"key": name},
                 })
 
         from pynput import mouse, keyboard

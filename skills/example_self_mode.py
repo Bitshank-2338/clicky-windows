@@ -12,11 +12,7 @@ from __future__ import annotations
 
 
 async def handle_self_mode(manager, transcript: str) -> str:
-    # Toggle a flag the overlay/manager could read on the next point_at.
-    # (Manager-level click-through is your own responsibility — this is a
-    #  template showing how to wire the trigger up.)
-    setattr(manager, "_self_mode_armed", True)
-    return "Self mode armed. I'll click the next thing I point at."
+    return "Tell me the task, for example 'click the Save button for me'. Clicky Drive shows the exact actions for you to approve before it does anything."
 
 
 SKILL = {

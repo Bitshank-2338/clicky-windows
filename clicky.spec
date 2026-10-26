@@ -15,7 +15,7 @@ We use --onedir (not --onefile) because:
   • Inno Setup bundles the folder into a single Setup.exe anyway.
 """
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
 # ── Modules that are lazy-imported by CompanionManager — PyInstaller's
 #    static analysis misses them, so we list them explicitly.
@@ -39,6 +39,13 @@ hidden = [
     # lazily inside functions, so they need to be named explicitly)
     "ui.setup_wizard",
     "ui.api_keys_dialog",
+    "ui.settings_window",
+    "ui.connections_window",
+    "ui.jobs_window",
+    "ui.drawing_board",
+    "storage", "session_store", "drawing", "drive", "jobs", "desktop",
+    "response_blocks", "browser_bridge", "connectors", "screen.privacy", "updates",
+    "audio.narration", "audio.devices", "audio.tts.sapi_tts_provider",
 
     # Lazy STT providers
     "audio.stt.deepgram_stt",
@@ -59,6 +66,8 @@ hidden = [
 # ── Heavy packages that ship non-Python assets (DLLs, JSON, voices).
 #    collect_all grabs submodules + data files + binaries + metadata.
 datas, binaries, hiddenimports = [], [], []
+datas.append(("browser_extension", "browser_extension"))
+datas.append(("RELEASE-NOTES-1.6.md", "."))
 for pkg in (
     "faster_whisper",
     "ctranslate2",
@@ -96,7 +105,6 @@ for pkg in (
         pass  # package not installed — that path is optional anyway
 
 hiddenimports += hidden
-hiddenimports += collect_submodules("PyQt6")
 
 
 a = Analysis(
@@ -116,6 +124,9 @@ a = Analysis(
     ],
     noarchive=False,
 )
+
+# Qt uses Windows' ICU API; an unrelated ICU found on PATH has a different ABI.
+a.binaries = [entry for entry in a.binaries if entry[0].lower() != "icuuc.dll"]
 
 pyz = PYZ(a.pure)
 

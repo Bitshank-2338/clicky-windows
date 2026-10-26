@@ -12,7 +12,10 @@
 ; ────────────────────────────────────────────────────────────────────
 
 #define MyAppName        "Clicky"
-#define MyAppVersion     "1.5.1"
+#define MyAppVersion     "1.6.0-preview"
+#ifndef BuildRoot
+  #define BuildRoot "dist\Clicky"
+#endif
 #define MyAppPublisher   "Shashank Singh"
 #define MyAppURL         "https://github.com/Bitshank-2338/clicky-windows"
 #define MyAppExeName     "Clicky.exe"
@@ -21,6 +24,7 @@
 AppId={{9A4E3F2C-7B1D-4A8F-9C6E-3D7F1B5E9A0C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion=1.6.0.0
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -54,9 +58,13 @@ Name: "startupicon";  Description: "Launch Clicky when Windows &starts";  GroupD
 ; good existing installation.
 Name: "installollama"; Description: "Also download && install Ollama (free local AI engine, ~700 MB) — needed for the no-API-key mode"; GroupDescription: "Free AI engine:"; Check: not OllamaPresent
 
+[InstallDelete]
+; Older previews accidentally bundled a foreign ICU that shadows Windows ICU.
+Type: files; Name: "{app}\_internal\icuuc.dll"
+
 [Files]
 ; Everything PyInstaller produced
-Source: "dist\Clicky\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}";                    Filename: "{app}\{#MyAppExeName}"

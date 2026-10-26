@@ -19,6 +19,12 @@ import av
 
 # Single global flag — flipping this stops every active playback in this process
 _stop_event = threading.Event()
+_pcm_observer = None
+
+
+def observe_pcm(callback):
+    global _pcm_observer
+    _pcm_observer = callback
 
 
 def stop_audio() -> None:
@@ -78,6 +84,12 @@ def _blocking_play_chunked(pcm: np.ndarray, sr: int) -> None:
                 if _stop_event.is_set():
                     return
                 end = min(i + block, len(pcm))
+                if _pcm_observer:
+                    try:
+                        _pcm_observer(pcm[i:end].flatten(), sr)
+                    except Exception:
+                        import logging
+                        logging.getLogger('clicky.recording').exception('could not record narration audio')
                 stream.write(pcm[i:end])
                 i = end
     except Exception:

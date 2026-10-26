@@ -6,6 +6,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QObject
 
 from config import cfg
+from storage import setting
 
 
 def _make_tray_icon(color: QColor) -> QIcon:
@@ -76,7 +77,7 @@ class TrayManager(QObject):
         self._tray.setToolTip(
             f"Clicky - AI Companion\nPress {cfg.hotkey} and just talk"
         )
-        self._search_enabled = True
+        self._search_enabled = setting("web_search", False)
         # Mirrors the persisted mic mode — off by default, so Clicky only
         # listens while you're actually asking it something.
         self._wake_enabled = cfg.ambient_mic()
@@ -86,13 +87,13 @@ class TrayManager(QObject):
             self._custom_instructions = _cfg.custom_instructions
         except Exception:
             self._custom_instructions = ""
-        self._slow_enabled = False
-        self._quiz_enabled = False
-        self._privacy_enabled = True
-        self._code_enabled = True
-        self._multilang_enabled = True
-        self._journal_enabled = True
-        self._ocr_enabled = True
+        self._slow_enabled = setting("slow_mode", False)
+        self._quiz_enabled = setting("quiz_mode", False)
+        self._privacy_enabled = setting("privacy_guard", True)
+        self._code_enabled = setting("code_mode", True)
+        self._multilang_enabled = setting("multilang", True)
+        self._journal_enabled = setting("journal", True)
+        self._ocr_enabled = setting("ocr", True)
         self._is_recording = False
 
         # Ollama model state — populated by manager via set_ollama_models()
@@ -407,27 +408,36 @@ class TrayManager(QObject):
             act.setChecked(current == code)
             act.triggered.connect(lambda checked, c=code: self.on_set_response_language.emit(c))
 
+    def refresh_microphones(self):
+        self._build_menu()
+
     def _build_mic_submenu(self, parent_menu: QMenu):
         """Lists available input devices so the user can pick a mic without
         digging through Windows sound settings."""
         try:
-            import sounddevice as sd
-            devices = sd.query_devices()
-            default_idx = sd.default.device[0]
+            from audio.devices import input_devices, recommended_inputs, resolve_input
+            devices = input_devices()
+            current, _ = resolve_input(cfg.mic_device_index, setting('mic_identity', {'default': True}))
         except Exception:
-            return  # sounddevice not ready yet — skip silently, not fatal
+            devices, current = [], None
 
         mic_menu = parent_menu.addMenu("Microphone")
-        for idx, dev in enumerate(devices):
-            if dev.get("max_input_channels", 0) <= 0:
-                continue
-            label = dev["name"]
-            if idx == default_idx:
-                label += "  (system default)"
-            act = mic_menu.addAction(label)
+        default = mic_menu.addAction('Windows default (recommended)')
+        default.setCheckable(True)
+        saved = setting('mic_identity', {'default': True})
+        default.setChecked(saved == {'default': True} or not saved and cfg.mic_device_index is None)
+        default.triggered.connect(lambda: self.on_set_mic_device.emit(-1))
+        primary = recommended_inputs(devices)
+        alternatives = [dev for dev in devices if dev not in primary]
+        all_drivers = mic_menu.addMenu('Other drivers / troubleshooting') if alternatives else None
+        for dev in primary + alternatives:
+            target = mic_menu if dev in primary else all_drivers
+            act = target.addAction(dev['name'] + ' (' + dev['host_name'] + ')')
             act.setCheckable(True)
-            act.setChecked(idx == getattr(self, "_active_mic_index", default_idx))
-            act.triggered.connect(lambda checked, i=idx: self.on_set_mic_device.emit(i))
+            act.setChecked(bool(current and dev['index'] == current['index'] and not default.isChecked()))
+            act.triggered.connect(lambda checked, i=dev['index']: self.on_set_mic_device.emit(i))
+        if not devices:
+            mic_menu.addAction('No microphone detected — check Windows permissions').setEnabled(False)
 
     def _build_ollama_submenu(self, parent_menu: QMenu, providers: dict):
         """Vision/Text model pickers + 'Pull recommended' for Ollama."""

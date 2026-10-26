@@ -1,5 +1,7 @@
 # Clicky for Windows 🔵
 
+**1.6 preview:** original Clicky Sketch and Drive, typed chat/history, offline Windows voice, local jobs/routines, Browser Link, reviewed MCP tools, dictation and narrated recordings. Read [what changed and what still needs live testing](RELEASE-NOTES-1.6.md). Configure these from the panel's **Settings**, **Sketch**, and **Work & routines** controls.
+
 > **An AI teaching companion that lives next to your cursor.**
 > Ask it anything about your screen — it points, explains, and guides you step-by-step, like a real tutor sitting beside you.
 
@@ -106,7 +108,8 @@ Switch mid-session from the system tray — takes about a second, no restart nee
 |---|---|---|
 | **ElevenLabs** | Premium voice clone | `ELEVENLABS_API_KEY` |
 | **OpenAI TTS** | High quality | `OPENAI_API_KEY` |
-| **Edge TTS** | Free, 400+ voices | None |
+| **Windows SAPI** | Offline system voice (local default) | None |
+| **Edge TTS** | Internet neural voices (optional) | None |
 
 ### 🗣️ Multi-Provider STT
 
@@ -169,7 +172,7 @@ Switch mid-session from the system tray — takes about a second, no restart nee
 - Records the screen at 8 fps as an MP4 alongside a Markdown transcript of all Q&A
 - Start: **Tray → Lesson Recording → Start recording**
 - Stop: tray menu → produces `lesson_YYYY-MM-DD_HH-MM.mp4` + `lesson_YYYY-MM-DD_HH-MM_transcript.md`
-- Saved to `%LOCALAPPDATA%\Clicky\recordings\`
+- Saved to `%LOCALAPPDATA%\Clicky\recordings\` (each session includes raw video, narration WAV, narrated MP4, and transcript).
 
 ### 🖊️ Whiteboard Annotations
 Clicky can draw directly on your screen as it explains:
@@ -246,8 +249,7 @@ pip install -r requirements.txt
 
 **Installed a release build?** You don't need to touch a file — open the tray
 icon → **Setup & Diagnostics → API Keys…**, paste your key, and hit Save. The
-first-run wizard offers the same screen. Keys are written to `.env` next to
-`Clicky.exe` for you.
+first-run wizard offers the same screen. GUI saves are encrypted for your Windows account in `%LOCALAPPDATA%\Clicky\credentials.bin`; nonsecret preferences are stored separately in `settings.json`. Legacy developer `.env` files are still read, but GUI saves no longer write plaintext keys there.
 
 **Running from source?** Create `.env` in the project root (copy from
 `.env.example`):
@@ -261,7 +263,7 @@ GOOGLE_API_KEY=AIza...
 # ── STT (all optional — falls back to Faster-Whisper) ──
 DEEPGRAM_API_KEY=...
 
-# ── TTS (all optional — falls back to Edge TTS) ──
+# ── TTS (all optional — falls back to Windows speech) ──
 ELEVENLABS_API_KEY=...
 ELEVENLABS_VOICE_ID=...
 
@@ -344,7 +346,7 @@ pyinstaller clicky.spec --clean --noconfirm
 # → or build Setup.exe with Inno Setup using installer.iss
 ```
 
-`dist/Clicky/Clicky.exe` runs on any Windows machine without Python installed. Include a `.env` file next to the exe with your API keys, or set them as system environment variables.
+`dist/Clicky/Clicky.exe` runs on any Windows machine without Python installed. Use Settings → Manage protected API keys for encrypted per-user credentials. Legacy developer `.env` files and environment variables remain supported.
 
 See [BUILD.md](BUILD.md) for full packaging instructions, including the Inno Setup installer.
 
@@ -404,7 +406,7 @@ main.py
   │     │     ├── lesson_recorder.py  # MP4 + transcript recording
   │     │     ├── multilang.py        # langdetect + Edge TTS voice switching
   │     │     ├── workflow_capture.py # pynput click/key recorder
-  │     │     └── collab.py           # live session skeleton (WebRTC)
+  │     │     └── collab.py           # opt-in trusted-LAN sharing
   │     ├── skills/             # user-extensible voice triggers
   │     ├── ai.web_search       # DuckDuckGo + Tavily + citation builder
   │     ├── ai.element_locator  # Claude Computer Use → exact (x, y) pixel
@@ -491,7 +493,7 @@ clicky-windows/
 │   ├── lesson_recorder.py       # MP4 + transcript
 │   ├── multilang.py             # language detection + voice switching
 │   ├── workflow_capture.py      # click/keystroke recorder
-│   └── collab.py                # live session skeleton
+│   └── collab.py                # opt-in trusted-LAN sharing
 │
 ├── skills/
 │   ├── __init__.py              # skill loader + trigger matcher

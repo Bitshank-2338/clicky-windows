@@ -1,0 +1,20 @@
+name: Windows regression tests
+on: [push, pull_request]
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check browser_extension/background.js
+      - run: node --check browser_extension/popup.js
+      - run: node tests/browser_extension.test.js

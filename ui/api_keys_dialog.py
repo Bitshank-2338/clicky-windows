@@ -154,7 +154,8 @@ class ApiKeysDialog(QDialog):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
-        where = QLabel(f"Saved to {cfg.env_path()}")
+        from storage import data_dir
+        where = QLabel(f"Encrypted for your Windows account in {data_dir() / 'credentials.bin'}")
         where.setObjectName("hint")
         where.setWordWrap(True)
         root.addWidget(where)
@@ -215,7 +216,11 @@ class ApiKeysDialog(QDialog):
             new = edit.text().strip()
             if new == cfg.get_api_key(env_var):
                 continue
-            cfg.set_api_key(env_var, new)
+            try:
+                cfg.set_api_key(env_var, new)
+            except (OSError, ValueError) as exc:
+                self._status.setText(f"Could not save {cfg.API_KEY_FIELDS[env_var][1]}: {exc}")
+                return
             changed.append(cfg.API_KEY_FIELDS[env_var][1])
             if new and env_var in LLM_PROVIDER_FOR_KEY:
                 newly_added_llm.append(LLM_PROVIDER_FOR_KEY[env_var])

@@ -1,4 +1,10 @@
-﻿# Clicky â€” Feature Testing Guide
+# Automated regression checks (1.6 preview)
+
+Run `python -m pytest tests -q` and `node tests/browser_extension.test.js`. These use synthetic screens/fake input and local servers. See [release notes](RELEASE-NOTES-1.6.md) for hardware/account checks still required. The older manual checklist below describes earlier builds; some menu names and expectations have changed.
+
+Always test the frozen executable too: `dist\Clicky\Clicky.exe --smoke-test --smoke-report build\startup-smoke.json`. It imports Qt, opens a native window and renders Sketch without starting the microphone, hotkeys or provider connections. `build.bat` runs this automatically and refuses a failed build.
+
+# Clicky â€” Feature Testing Guide
 
 How to verify every feature works. Go top-to-bottom; each section is independent.
 

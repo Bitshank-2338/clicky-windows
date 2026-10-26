@@ -24,6 +24,24 @@ from typing import List
 import mss
 import mss.tools
 from PIL import Image
+from screen.privacy import redact, sensitive_rectangles
+
+_display_layout = []
+
+
+def configure_displays(screens):
+    """Snapshot Qt's logical geometries on its main thread before capture workers run."""
+    global _display_layout
+    _display_layout = [(s.name(), s.geometry().x(), s.geometry().y(),
+                        s.geometry().width(), s.geometry().height(), s.devicePixelRatio()) for s in screens]
+
+
+def _display_geometry(monitor):
+    # Qt/Windows retain physical monitor origins; scale only the local displacement.
+    for _, x, y, width, height, scale in _display_layout:
+        if x == monitor["left"] and y == monitor["top"]:
+            return x, y, scale
+    return monitor["left"], monitor["top"], _query_dpi_scale(monitor)
 
 
 @dataclass
@@ -49,13 +67,22 @@ class ScreenShot:
     logical_top: int
 
 
-def _query_dpi_scale() -> float:
+def _query_dpi_scale(monitor=None) -> float:
     """Best-effort DPI scale for the primary monitor.
     Returns 1.0 if anything goes wrong."""
     try:
         # GetDpiForSystem returns DPI as integer (96 = 100%, 144 = 150%)
         u = ctypes.windll.user32
-        u.SetProcessDPIAware()
+        if monitor:
+            from ctypes import wintypes
+            u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            u.MonitorFromPoint.restype = wintypes.HANDLE
+            handle = u.MonitorFromPoint(wintypes.POINT(monitor["left"] + 1, monitor["top"] + 1), 2)
+            dx, dy = wintypes.UINT(), wintypes.UINT()
+            sh = ctypes.windll.shcore
+            sh.GetDpiForMonitor.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.POINTER(wintypes.UINT), ctypes.POINTER(wintypes.UINT)]
+            if sh.GetDpiForMonitor(handle, 0, ctypes.byref(dx), ctypes.byref(dy)) == 0:
+                return dx.value / 96.0
         gdfs = getattr(u, "GetDpiForSystem", None)
         if gdfs:
             return max(1.0, gdfs() / 96.0)
@@ -65,20 +92,33 @@ def _query_dpi_scale() -> float:
         return 1.0
 
 
-def capture_all_screens(max_width: int = 1280) -> List[ScreenShot]:
+def capture_all_screens(max_width: int = 1280, privacy_guard: bool = True, preferred_point=None) -> List[ScreenShot]:
     """Capture all monitors. Each ScreenShot carries everything needed
     to convert detection coords back into logical screen space."""
-    dpi = _query_dpi_scale()
+    rectangles = sensitive_rectangles() if privacy_guard else []
     results = []
     with mss.mss() as sct:
         # mss monitor index 0 is the combined virtual screen; 1+ are real monitors
-        for i, monitor in enumerate(sct.monitors[1:], start=1):
+        monitors = list(sct.monitors[1:])
+        try:
+            from ctypes import wintypes
+            point = wintypes.POINT()
+            if preferred_point:
+                point.x, point.y = preferred_point
+            if preferred_point or ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+                monitors.sort(key=lambda m: not (m["left"] <= point.x < m["left"] + m["width"] and m["top"] <= point.y < m["top"] + m["height"]))
+        except AttributeError:
+            pass
+        for i, monitor in enumerate(monitors, start=1):
+            logical_left, logical_top, dpi = _display_geometry(monitor)
             raw = sct.grab(monitor)
             img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
             phys_w, phys_h = img.width, img.height
             phys_left = int(monitor.get("left", 0))
             phys_top  = int(monitor.get("top",  0))
+            if privacy_guard:
+                redact(img, phys_left, phys_top, rectangles + sensitive_rectangles())
 
             # Downscale only the JPEG we send to the LLM — keep physical numbers intact
             if img.width > max_width:
@@ -102,8 +142,8 @@ def capture_all_screens(max_width: int = 1280) -> List[ScreenShot]:
                 physical_left=phys_left,
                 physical_top=phys_top,
                 dpi_scale=dpi,
-                logical_left=int(round(phys_left / dpi)),
-                logical_top=int(round(phys_top  / dpi)),
+                logical_left=logical_left,
+                logical_top=logical_top,
             ))
 
     return results
@@ -112,7 +152,7 @@ def capture_all_screens(max_width: int = 1280) -> List[ScreenShot]:
 def capture_primary() -> ScreenShot:
     """Capture only the primary monitor."""
     screens = capture_all_screens()
-    return screens[0] if screens else None
+    return next((s for s in screens if s.physical_left == 0 and s.physical_top == 0), screens[0] if screens else None)
 
 
 def screen_count() -> int:

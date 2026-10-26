@@ -38,6 +38,11 @@ def _ensure_std_streams() -> None:
 
 _ensure_std_streams()
 
+# Run before normal startup imports, credentials, microphone and global hooks.
+if __name__ == "__main__" and "--smoke-test" in sys.argv:
+    from packaging_smoke import run
+    sys.exit(run())
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
@@ -136,16 +141,151 @@ def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    app = QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
+    from ui.design import apply_theme
+    apply_theme(app)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Clicky")
     app.setApplicationDisplayName("Clicky - AI Companion")
+    from screen.capture import configure_displays
+    configure_displays(app.screens())
+    app.screenAdded.connect(lambda _screen: configure_displays(app.screens()))
+    app.screenRemoved.connect(lambda _screen: configure_displays(app.screens()))
+    for screen in app.screens():
+        screen.geometryChanged.connect(lambda _geometry: configure_displays(app.screens()))
 
     # ── Core components ───────────────────────────────────────────────────────
     manager = CompanionManager()
     panel   = CompanionPanel()
     overlay = CursorOverlay()
     tray    = TrayManager()
+    from PyQt6.QtCore import QTimer
+    from desktop import foreground, restore
+    _last_foreground = [{}]
+    def _track_foreground():
+        try:
+            context = foreground()
+            if context["pid"] != os.getpid():
+                _last_foreground[0] = context
+                manager._desktop_context = context
+        except OSError:
+            pass
+    _focus_timer = QTimer(app)
+    _focus_timer.timeout.connect(_track_foreground)
+    _focus_timer.start(150)
+    _track_foreground()
+
+    _boards = []
+    def _show_scene(scene):
+        from ui.drawing_board import DrawingBoard
+        board = DrawingBoard(scene)
+        board.question.connect(manager.submit_text)
+        board.narrate.connect(lambda text:manager._submit(manager._reply_local(text)))
+        manager.sig_caption.connect(board.set_caption)
+        board.show()
+        _boards.append(board)
+        if len(_boards) > 4:
+            old = _boards.pop(0)
+            manager.sig_caption.disconnect(old.set_caption)
+            old.close()
+            old.deleteLater()
+    manager.sig_scene.connect(_show_scene)
+    from drawing import example_scene
+    panel.on_sketch_requested.connect(lambda: _show_scene(example_scene()))
+    from ui.jobs_window import JobsWindow
+    work_window = JobsWindow()
+    panel.on_jobs_requested.connect(work_window.show)
+    from ui.settings_window import SettingsWindow
+    settings_window = SettingsWindow(manager)
+    panel.on_settings_requested.connect(settings_window.show)
+    settings_window.show_sketch.connect(lambda: _show_scene(example_scene()))
+    settings_window.show_work.connect(work_window.show)
+    from ui.connections_window import ConnectionsWindow
+    connections_window = ConnectionsWindow(manager)
+    settings_window.open_connections.connect(connections_window.show)
+    def _review_external(proposal):
+        import json
+        from PyQt6.QtWidgets import QMessageBox
+        if QMessageBox.question(panel,"Review Clicky connected request",json.dumps(proposal,ensure_ascii=False,indent=2)[:10000]+"\n\nAllow this request? It may read or change data in your connected browser/app.",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+            manager._submit(manager.run_external(proposal))
+    manager.sig_external_request.connect(_review_external)
+    manager.sig_external_result.connect(connections_window.result_ready.emit)
+    manager.sig_external_result.connect(lambda _result: connections_window.show())
+    def _shared_message(value):
+        if value['type']=='qa':
+            connections_window.shared_text.appendPlainText('Shared question: '+value['q']+'\nShared answer: '+value['a']+'\n')
+        else:_show_scene(value['scene'])
+    manager.sig_collab_message.connect(_shared_message)
+    settings_window.preview_voice.connect(lambda: manager._submit(manager._reply_local("Hello, I'm Clicky. This is my current voice.")))
+
+    from PyQt6.QtWidgets import QLabel
+    caption = QLabel()
+    caption.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowTransparentForInput)
+    caption.setStyleSheet("background: #101722; color: white; padding: 14px; border-radius: 10px; font-size: 18px;")
+    caption.setWordWrap(True)
+    caption.setFixedWidth(620)
+    def _caption(text):
+        from storage import setting
+        if not text or not setting('captions',True):
+            caption.hide()
+            return
+        from PyQt6.QtGui import QCursor
+        screen = app.screenAt(QCursor.pos()) or app.primaryScreen()
+        area = screen.availableGeometry()
+        caption.setText(text)
+        caption.adjustSize()
+        caption.move(area.center().x()-caption.width()//2,area.bottom()-caption.height()-30)
+        caption.show()
+        try:
+            from screen.privacy import exclude_window
+            exclude_window(caption)
+        except OSError:
+            caption.hide()
+    manager.sig_caption.connect(_caption)
+
+    def _dictation_ready(text,context):
+        from PyQt6.QtWidgets import QMessageBox
+        from tutor import is_sensitive_window
+        try:
+            current = foreground()
+            if current['hwnd'] != context.get('hwnd') or is_sensitive_window(current['title']):
+                raise ValueError("The destination changed or may be private")
+            import uiautomation as auto
+            control = auto.GetFocusedControl()
+            if control is None or control.GetPropertyValue(30019):
+                raise ValueError("The focused field is protected")
+            if control.ControlTypeName not in {'EditControl','DocumentControl'}:
+                raise ValueError("No editable field is focused")
+            from pynput.keyboard import Controller
+            Controller().type(text)
+        except Exception as exc:
+            box = QMessageBox(panel)
+            box.setWindowTitle("Dictation ready")
+            box.setText(f"{exc}. Your transcript is below; it was not inserted.")
+            box.setDetailedText(text)
+            copy = box.addButton("Copy transcript",QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Close)
+            box.exec()
+            if box.clickedButton() is copy:
+                app.clipboard().setText(text)
+    manager.sig_dictation_ready.connect(_dictation_ready)
+
+    def _review_drive(value):
+        from drive import validate_plan, describe
+        from PyQt6.QtWidgets import QMessageBox
+        context = dict(getattr(manager, "_drive_context", {}))
+        approved = QMessageBox.question(panel, "Clicky Drive — review actions", describe(validate_plan(value)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        if approved:
+            try:
+                restore(context)
+            except (OSError, KeyError) as exc:
+                approved = False
+                tray.show_notification("Drive did not start", str(exc))
+        manager.approve_drive(approved)
+    manager.sig_drive_request.connect(_review_drive)
+    manager.sig_drive_progress.connect(lambda message: tray.show_notification("Clicky Drive", message))
 
     # ── Wire signals ──────────────────────────────────────────────────────────
 
@@ -189,9 +329,15 @@ def main():
             "Clicky error", f"{e}\n\nFull details: {_log_hint}"
         )
     )
+    manager.sig_notice.connect(lambda message: tray.show_notification('Clicky', message))
 
     # Panel → Manager
     panel.on_model_changed.connect(manager.set_model)
+    panel.on_text_submitted.connect(manager.submit_text)
+    panel.on_stop_requested.connect(manager.stop)
+    manager.sig_turn_started.connect(panel.begin_turn)
+    panel.on_new_chat.connect(manager.clear_history)
+    panel.on_new_chat.connect(panel.clear_response)
 
     def _on_doc_dropped(path: str):
         ok = manager.attach_document(path)
@@ -233,6 +379,21 @@ def main():
     manager.sig_recording_state.connect(
         lambda on, _path: tray.set_recording_state(on)
     )
+    def _record_overlay():
+        if not manager._recorder or not manager._recorder.is_recording:
+            return
+        from PyQt6.QtGui import QImage
+        from PIL import Image
+        image = overlay.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        ink = Image.frombytes('RGBA',(image.width(),image.height()),image.bits().asstring(image.sizeInBytes()))
+        primary = app.primaryScreen()
+        scale = primary.devicePixelRatio()
+        desired = (round(overlay.width()*scale), round(overlay.height()*scale))
+        if ink.size != desired:ink=ink.resize(desired)
+        manager._recorder._overlay = (ink, overlay.x(), overlay.y(), scale)
+    _record_timer = QTimer(app)
+    _record_timer.timeout.connect(_record_overlay)
+    _record_timer.start(125)
 
     # Workflow capture
     def _wf_start():
@@ -344,6 +505,7 @@ def main():
     tray.on_ollama_pull.connect(manager.pull_ollama_model)
     tray.on_ollama_refresh.connect(manager.refresh_ollama_models)
     tray.on_set_mic_device.connect(manager.set_mic_device)
+    manager.sig_microphone_changed.connect(tray.refresh_microphones)
     tray.on_set_response_language.connect(manager.set_response_language)
     tray.on_set_stt_language.connect(manager.set_stt_language)
     tray.on_set_custom_instructions.connect(manager.set_custom_instructions)
@@ -389,6 +551,7 @@ def main():
         dlg.show()
         _setup_keepalive[1] = dlg   # keep a reference so Qt doesn't GC it
     tray.on_api_keys.connect(_open_api_keys)
+    settings_window.open_keys.connect(_open_api_keys)
 
     def _save_diagnostics():
         import datetime, json, platform, traceback
@@ -439,11 +602,29 @@ def main():
     tray.on_quit.connect(lambda: (tray.hide_icon(), manager.shutdown(), app.quit()))
 
     # ── Global hotkey ─────────────────────────────────────────────────────────
-    hotkey = GlobalHotkeyMonitor(
-        on_press=manager.on_hotkey_press,
-        on_release=manager.on_hotkey_release,
-    )
-    hotkey.start()
+    _shortcuts = []
+    _text_shortcut = [None]
+    from PyQt6.QtCore import QObject, pyqtSignal
+    class ChatShortcut(QObject):
+        show = pyqtSignal()
+    chat_shortcut = ChatShortcut()
+    chat_shortcut.show.connect(panel.show)
+    def _install_shortcuts():
+        from storage import setting
+        import keyboard
+        for shortcut in _shortcuts:
+            shortcut.stop()
+        _shortcuts.clear()
+        if _text_shortcut[0] is not None:
+            keyboard.remove_hotkey(_text_shortcut[0])
+        for on_press,on_release,key in ((manager.on_hotkey_press,manager.on_hotkey_release,cfg.hotkey),
+                                        (manager.begin_dictation,manager.on_hotkey_release,setting('dictation_hotkey','ctrl+alt+d'))):
+            shortcut = GlobalHotkeyMonitor(on_press=on_press,on_release=on_release,hotkey=key)
+            shortcut.start()
+            _shortcuts.append(shortcut)
+        _text_shortcut[0] = keyboard.add_hotkey(setting('text_hotkey','ctrl+alt+t'),chat_shortcut.show.emit)
+    settings_window.shortcuts_changed.connect(_install_shortcuts)
+    _install_shortcuts()
 
     # Esc = cancel current generation (kills Ollama ramble mid-stream)
     stop_key = StopHotkey(on_stop=manager.stop, key="esc")
@@ -451,8 +632,15 @@ def main():
 
     # ── Show UI + start listener ──────────────────────────────────────────────
     overlay.show()        # persistent overlay (cursor follow)
+    from screen.privacy import exclude_window
+    for window in (overlay, panel):
+        try:
+            exclude_window(window)
+        except OSError as exc:
+            manager.sig_error.emit(f"Could not exclude Clicky's window from screen capture: {exc}")
     # Panel is hidden by default — user can open it from the tray menu if needed
     manager.start()        # begin ambient mic + wake-word scanning
+    app.aboutToQuit.connect(manager.shutdown)
 
     providers = cfg.describe()
     _hk = "+".join(p.strip().capitalize() for p in cfg.hotkey.split("+"))

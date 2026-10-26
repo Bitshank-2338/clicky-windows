@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Clicky Browser Link",
+  "version": "1.0.0",
+  "description": "Connect your browser to your own Clicky for Windows. Actions run only after you review them in Clicky.",
+  "minimum_chrome_version": "120",
+  "permissions": ["tabs", "storage", "scripting", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_popup": "popup.html"}
+}

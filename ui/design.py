@@ -1,4 +1,19 @@
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QPalette
+
+
+def apply_theme(app):
+    app.setStyle('Fusion')
+    palette=QPalette()
+    for role,color in ((QPalette.ColorRole.Window,'#121216'),(QPalette.ColorRole.WindowText,'#f0f0f5'),
+                       (QPalette.ColorRole.Base,'#1c1c22'),(QPalette.ColorRole.AlternateBase,'#24242e'),
+                       (QPalette.ColorRole.Text,'#eeeeF5'),(QPalette.ColorRole.Button,'#242936'),
+                       (QPalette.ColorRole.ButtonText,'#eeeeF5'),(QPalette.ColorRole.Highlight,'#0078ff'),
+                       (QPalette.ColorRole.HighlightedText,'#ffffff'),(QPalette.ColorRole.Link,'#65a5ff'),
+                       (QPalette.ColorRole.ToolTipBase,'#242936'),(QPalette.ColorRole.ToolTipText,'#eeeeF5')):
+        palette.setColor(role,QColor(color))
+    palette.setColor(QPalette.ColorGroup.Disabled,QPalette.ColorRole.Text,QColor('#81818e'))
+    palette.setColor(QPalette.ColorGroup.Disabled,QPalette.ColorRole.ButtonText,QColor('#81818e'))
+    app.setPalette(palette)
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 BLUE_GLOW       = QColor(0, 120, 255)

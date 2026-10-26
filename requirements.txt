@@ -27,7 +27,7 @@ faster-whisper>=1.0.0
 # pywhispercpp>=1.2.0
 
 # TTS - free
-edge-tts>=6.1.10
+edge-tts>=7.3.0,<8
 
 # TTS - premium (optional)
 elevenlabs>=1.0.0
@@ -56,8 +56,10 @@ langdetect>=1.0.9
 imageio>=2.34.0
 imageio-ffmpeg>=0.5.0
 
-# Workflow capture (record clicks + keystrokes)
+# Reviewed desktop input and keystroke-free workflow summaries
 pynput>=1.7.7
+uiautomation>=2.0.18
+rapidocr-onnxruntime>=1.3.0
+opencv-python-headless>=4.8.0
 
-# Live collaboration (WebRTC) — install when collab signalling server exists
-# aiortc>=1.9.0
+# Trusted-LAN sharing uses aiohttp above; no WebRTC dependency.

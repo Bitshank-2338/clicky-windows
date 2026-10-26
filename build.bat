@@ -59,6 +59,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Test the actual frozen Qt runtime before shipping it.
+setlocal
+set "QT_QPA_PLATFORM=offscreen"
+start "" /wait "dist\Clicky\Clicky.exe" --smoke-test --smoke-report "build\startup-smoke.json"
+if errorlevel 1 (
+    echo [ERROR] Packaged startup check failed. Do not ship this build.
+    exit /b 1
+)
+if not exist "build\startup-smoke.json" (
+    echo [ERROR] Packaged startup check produced no report.
+    exit /b 1
+)
+endlocal
+
 REM ── 5. Copy .env.example and LICENSE into the dist folder ─────────
 echo [4/4] Bundling docs and env template...
 copy /y ".env.example" "dist\Clicky\.env.example" >nul

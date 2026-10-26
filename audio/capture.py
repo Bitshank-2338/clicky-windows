@@ -29,20 +29,21 @@ class MicCapture:
         if self._running:
             return
         self._running = True
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=BLOCK_SIZE,
-            callback=self._callback,
-        )
-        self._stream.start()
+        try:
+            from audio.devices import open_input_stream
+            self._stream, _, _ = open_input_stream(self._callback)
+        except Exception:
+            self._running = False
+            raise
 
     def stop(self):
         self._running = False
         if self._stream:
             try:
                 self._stream.stop()
+            except Exception:
+                pass
+            try:
                 self._stream.close()
             except Exception:
                 pass
@@ -77,6 +78,15 @@ def apply_noise_gate(pcm_data: bytes, threshold: float = 0.008) -> bytes:
         if rms < threshold:
             out[i:i + block] = 0.0
     return (out * 32767).astype(np.int16).tobytes()
+
+
+def capture_problem(pcm_data: bytes) -> str:
+    if len(pcm_data) < SAMPLE_RATE // 10 * 2:
+        return 'No microphone audio arrived. Check the selected device and Windows microphone permissions in Settings → Microphone.'
+    audio = np.frombuffer(pcm_data, dtype=np.int16).astype(np.int32)
+    if np.max(np.abs(audio)) <= 2:
+        return 'The microphone produced silence. Check mute, the Windows input level and the selected device. Use Settings → Microphone → Test microphone.'
+    return ''
 
 
 def trim_silence(pcm_data: bytes, threshold: float = 0.008, pad_ms: int = 150) -> bytes:
@@ -147,8 +157,8 @@ def pcm16_to_wav(pcm_data: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
     auto-gain normalization. (Silence trimming is applied separately by
     callers that record full utterances — see trim_silence — since the
     wake-word path intentionally pads short clips with silence.)"""
-    pcm_data = apply_noise_gate(pcm_data)
     pcm_data = normalize_audio(pcm_data)
+    pcm_data = apply_noise_gate(pcm_data)
     import struct
     channels = 1
     bits = 16

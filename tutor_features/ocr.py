@@ -36,15 +36,19 @@ def needs_ocr(query: str) -> bool:
 def run_ocr(jpeg_bytes: bytes) -> str:
     """Return the extracted text from a JPEG screenshot, or empty string."""
     try:
-        import pytesseract   # type: ignore
-    except ImportError:
-        return ""
+        import numpy as np
+        from ai.hybrid_pointer import _get_ocr
+        engine=_get_ocr()
+        if engine:
+            with Image.open(io.BytesIO(jpeg_bytes)) as image:
+                result,_=engine(np.array(image.convert('RGB')))
+            return '\n'.join(row[1] for row in (result or []) if row[2]>=.4)
+    except Exception:
+        pass
     try:
-        img = Image.open(io.BytesIO(jpeg_bytes))
-        text = pytesseract.image_to_string(img)
-        return (text or "").strip()
-    except pytesseract.TesseractNotFoundError:
-        return ""
+        import pytesseract
+        with Image.open(io.BytesIO(jpeg_bytes)) as image:
+            return (pytesseract.image_to_string(image) or '').strip()
     except Exception:
         return ""
 

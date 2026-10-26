@@ -67,7 +67,7 @@ _INTERACTIVE_TYPES = {
 
 
 def _normalize(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    return re.sub(r"[^\w]+", " ", (s or "").casefold(), flags=re.UNICODE).strip()
 
 
 def _score_match(query: str, element_name: str, element_type: str) -> float:
@@ -92,12 +92,22 @@ def _score_match(query: str, element_name: str, element_type: str) -> float:
         if q_words and n_words:
             overlap = len(q_words & n_words) / max(len(q_words), 1)
             score = overlap * 0.7
-    if element_type in _INTERACTIVE_TYPES:
+    if element_type.removesuffix("Control") in _INTERACTIVE_TYPES:
         score = min(1.0, score + 0.1)
     return score
 
 
-def _find_via_uia(query: str, min_score: float = 0.5) -> Optional[Target]:
+def _find_via_uia(query: str, min_score: float = 0.5, window_handle=None) -> Optional[Target]:
+    try:
+        import uiautomation as auto
+        with auto.UIAutomationInitializerInThread():
+            return _scan_uia(query, min_score, window_handle)
+    except Exception as exc:
+        log.debug("UIA lookup unavailable: %s", exc)
+        return None
+
+
+def _scan_uia(query: str, min_score: float = 0.5, window_handle=None) -> Optional[Target]:
     """Walk the UIA tree for the foreground window + descendants, find best match."""
     try:
         import uiautomation as auto
@@ -108,7 +118,7 @@ def _find_via_uia(query: str, min_score: float = 0.5) -> Optional[Target]:
     try:
         # Get the focused (foreground) window — pointing is almost always
         # for the active app, and walking the whole desktop is slow.
-        root = auto.GetForegroundControl()
+        root = auto.ControlFromHandle(window_handle) if window_handle else auto.GetForegroundControl()
         if root is None:
             root = auto.GetRootControl()
     except Exception as e:
@@ -269,16 +279,25 @@ def _find_via_ocr(query: str, screenshot_path: Optional[str] = None,
 def _find_via_vision(query: str, screenshot, llm_provider) -> Optional[Target]:
     """Last-resort: use the grid-locator path (element_locator.py)."""
     try:
-        from ai.element_locator import locate_element  # v1 module
+        import asyncio
+        from ai.universal_locator import detect_element_universal
     except ImportError:
         log.warning("element_locator not available — Tier 3 (vision) disabled")
         return None
 
     try:
-        coord = locate_element(query, screenshot, llm_provider)
+        coord = asyncio.run(detect_element_universal(
+            llm=llm_provider, screenshot_jpeg_b64=screenshot.base64_jpeg,
+            original_width=screenshot.width, original_height=screenshot.height,
+            screen_index=screenshot.index, user_question=query,
+            physical_width=screenshot.physical_width, physical_height=screenshot.physical_height,
+            physical_left=screenshot.physical_left, physical_top=screenshot.physical_top,
+            dpi_scale=screenshot.dpi_scale,
+        ))
         if not coord:
             return None
-        x, y = coord
+        x = screenshot.physical_left + (coord.x - screenshot.logical_left) * screenshot.dpi_scale
+        y = screenshot.physical_top + (coord.y - screenshot.logical_top) * screenshot.dpi_scale
         return Target(
             x=x, y=y, bbox=(x - 20, y - 20, x + 20, y + 20),
             label=query, source="vision",
@@ -302,6 +321,7 @@ def find_target(
     skip_uia: bool = False,
     skip_ocr: bool = False,
     skip_vision: bool = False,
+    window_handle=None,
 ) -> Optional[Target]:
     """Resolve a natural-language pointing query into pixel coordinates.
 
@@ -322,16 +342,29 @@ def find_target(
     """
     if not query or not query.strip():
         return None
+    from tutor import target_name
+    query = target_name(query)
 
     # Tier 1: UIA — fast, free, often perfect
     if not skip_uia:
-        t = _find_via_uia(query)
+        t = _find_via_uia(query, window_handle=window_handle)
         if t is not None and t.confidence >= 0.5:
             return t
 
     # Tier 2: OCR — text-based fallback for canvas apps
     if not skip_ocr:
+        if pil_image is None and screenshot is not None:
+            import base64, io
+            from PIL import Image
+            pil_image = Image.open(io.BytesIO(base64.b64decode(screenshot.base64_jpeg)))
+            pil_image = pil_image.resize((screenshot.physical_width, screenshot.physical_height))
         t = _find_via_ocr(query, pil_image=pil_image)
+        if t is not None and screenshot is not None:
+            t.x += screenshot.physical_left
+            t.y += screenshot.physical_top
+            l, top, r, b = t.bbox
+            t.bbox = (l + screenshot.physical_left, top + screenshot.physical_top,
+                      r + screenshot.physical_left, b + screenshot.physical_top)
         if t is not None and t.confidence >= 0.5:
             return t
 

@@ -202,8 +202,8 @@ async def detect_element(
 
         # Stage 3: physical → logical (Qt cursor space)
         scale = dpi_scale if dpi_scale > 0 else 1.0
-        lx = int(round(vx / scale))
-        ly = int(round(vy / scale))
+        lx = int(round(physical_left + px / scale))
+        ly = int(round(physical_top + py / scale))
         return Detected(x=lx, y=ly, screen_index=screen_index)
 
     return None

@@ -329,7 +329,7 @@ async def detect_element_universal(
     vy = py + physical_top
 
     s = dpi_scale if dpi_scale > 0 else 1.0
-    lx = int(round(vx / s))
-    ly = int(round(vy / s))
+    lx = int(round(physical_left + px / s))
+    ly = int(round(physical_top + py / s))
 
     return Detected(x=lx, y=ly, screen_index=screen_index)

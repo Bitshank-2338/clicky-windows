@@ -14,6 +14,12 @@ class ElevenLabsProvider(BaseTTS):
     def __init__(self):
         self._voice_id = cfg.elevenlabs_voice_id or DEFAULT_VOICE_ID
 
+    def set_voice(self, voice):
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_-]{10,100}", voice):
+            raise ValueError("Use an ElevenLabs voice ID")
+        self._voice_id = voice
+
     async def speak(self, text: str) -> None:
         if not text.strip():
             return

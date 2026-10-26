@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import numpy as np
 import sounddevice as sd
 
-from audio.capture import pcm16_to_wav, resample_pcm, SAMPLE_RATE
+from audio.capture import pcm16_to_wav, SAMPLE_RATE
 
 
 class Mode(Enum):
@@ -56,11 +56,14 @@ class AmbientListener:
         on_wake: Callable[[], None],
         device: Optional[int] = None,
         ambient: bool = True,
+        identity=None,
     ):
         self._on_level = on_level
         self._on_wake = on_wake
         self._device = device       # None = system default input device
-        self._stream_rate = SAMPLE_RATE   # actual rate the stream opens at
+        self._identity = identity
+        self.device_name = ''
+        self.last_warning = ''
         # ambient=False → the mic stays closed until start_recording(). No
         # wake-word scanning, no continuous Whisper passes, and no microphone
         # indicator in the system tray while Clicky is idle.
@@ -80,6 +83,7 @@ class AmbientListener:
 
         # Recording buffer (hotkey push-to-talk OR post-wake capture)
         self._rec_buffer: list[bytes] = []
+        self.on_recorded_pcm = None
 
         # Lazy tiny whisper for wake word
         self._wake_model = None
@@ -98,36 +102,23 @@ class AmbientListener:
             return
         self._running = True
         if self._ambient:
-            self._open_stream()
+            try:
+                self._open_stream()
+            except Exception:
+                self._running = False
+                raise
 
     def _open_stream(self):
         if self._stream is not None:
-            return
-        try:
-            self._stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="int16",
-                blocksize=FRAMES_PER_BLOCK,
-                callback=self._callback,
-                device=self._device,
-            )
-            self._stream_rate = SAMPLE_RATE
-        except Exception:
-            # Device doesn't support 16kHz directly — open at its native
-            # rate and resample every block to 16kHz for Whisper.
-            info = sd.query_devices(self._device, "input")
-            native_rate = int(info["default_samplerate"])
-            self._stream_rate = native_rate
-            self._stream = sd.InputStream(
-                samplerate=native_rate,
-                channels=1,
-                dtype="int16",
-                blocksize=int(native_rate * BLOCK_MS / 1000),
-                callback=self._callback,
-                device=self._device,
-            )
-        self._stream.start()
+            try:
+                if self._stream.active:
+                    return
+            except Exception:
+                pass
+            self._close_stream()
+        from audio.devices import open_input_stream
+        self._stream, info, self.last_warning = open_input_stream(self._callback, self._device, self._identity)
+        self.device_name = info['name'] + ' (' + info['host_name'] + ')'
 
     def stop(self):
         self._running = False
@@ -137,6 +128,9 @@ class AmbientListener:
         if self._stream:
             try:
                 self._stream.stop()
+            except Exception:
+                pass
+            try:
                 self._stream.close()
             except Exception:
                 pass
@@ -153,7 +147,12 @@ class AmbientListener:
         self._mode = Mode.RECORDING
         if not self._running:
             self._running = True
-        self._open_stream()
+        try:
+            self._open_stream()
+        except Exception:
+            self._mode = Mode.STANDBY
+            self._running = False
+            raise
 
     def stop_recording(self) -> bytes:
         """Return buffered PCM16 bytes and resume standby."""
@@ -174,11 +173,16 @@ class AmbientListener:
         """Switch between always-listening and hotkey-only at runtime."""
         if ambient == self._ambient:
             return
+        previous = self._ambient
         self._ambient = ambient
         if not self._running:
             return
         if ambient:
-            self._open_stream()
+            try:
+                self._open_stream()
+            except Exception:
+                self._ambient = previous
+                raise
         elif self._mode != Mode.RECORDING:
             self._close_stream()
 
@@ -197,17 +201,16 @@ class AmbientListener:
             return
 
         pcm_int16 = indata[:, 0] if indata.ndim == 2 else indata
-        if self._stream_rate != SAMPLE_RATE:
-            pcm_int16 = np.frombuffer(
-                resample_pcm(pcm_int16.tobytes(), self._stream_rate, SAMPLE_RATE),
-                dtype=np.int16,
-            )
         pcm_float = pcm_int16.astype(np.float32) / 32768.0
         rms = float(np.sqrt(np.mean(pcm_float ** 2)))
         self._on_level(rms)
 
         if self._mode == Mode.RECORDING:
-            self._rec_buffer.append(pcm_int16.tobytes())
+            data = pcm_int16.tobytes()
+            self._rec_buffer.append(data)
+            sink = self.on_recorded_pcm
+            if sink:
+                sink(data)
             return
 
         # Standby: VAD-based segment capture for wake-word

@@ -80,6 +80,7 @@ class GlobalHotkeyMonitor:
         self._has_win = any(p in ("win", "windows", "cmd") for p in self._parts)
         self._modifier_only = all(p in _MOD_ALIASES for p in self._parts)
         self._hook_handle = None
+        self._key_handles = []
         # Canonical set of tokens the combo needs, and our own live key-state.
         # We track state from the raw event stream instead of is_pressed():
         # inside a hook callback the lib's state table may not include the
@@ -94,8 +95,8 @@ class GlobalHotkeyMonitor:
             self._hook_handle = keyboard.hook(self._on_any_event)
         else:
             terminal = self._parts[-1]
-            keyboard.on_press_key(terminal, self._handle_press)
-            keyboard.on_release_key(terminal, self._handle_release)
+            self._key_handles = [keyboard.on_press_key(terminal, self._handle_press),
+                                 keyboard.on_release_key(terminal, self._handle_release)]
 
     # ── Modifier-only mode ────────────────────────────────────────────────────
 
@@ -156,7 +157,9 @@ class GlobalHotkeyMonitor:
             except Exception:
                 pass
             self._hook_handle = None
-        keyboard.unhook_all()
+        for handle in self._key_handles:
+            keyboard.unhook(handle)
+        self._key_handles = []
 
 
 class StopHotkey:
